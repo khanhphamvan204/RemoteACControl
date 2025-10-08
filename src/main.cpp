@@ -9,6 +9,12 @@
 #define BLYNK_TEMPLATE_ID "TMPL6zXSFYGz3"
 #define BLYNK_TEMPLATE_NAME "AC"
 #include <BlynkSimpleEsp32.h>
+#include <ESPAsyncWebServer.h>
+#include <ArduinoJson.h>
+
+// Khai báo prototype cho các hàm
+void setupWebServer();
+void sendACCommand();
 
 // ============ CẤU HÌNH CHÂN KẾT NỐI ============
 #define DHT_PIN 4
@@ -31,6 +37,9 @@ IRsend irsend(IR_SEND_PIN);
 IRrecv irrecv(IR_RECV_PIN);
 decode_results results;
 
+// ============ CẤU HÌNH WEBSERVER ============
+AsyncWebServer server(80);
+
 // ============ BIẾN TOÀN CỤC ============
 float temperature = 0;
 float humidity = 0;
@@ -39,15 +48,13 @@ int acTemp = 25;
 String acMode = "COOL";
 unsigned long lastSensorRead = 0;
 const long sensorInterval = 2000;
+unsigned long lastBlynkUpdate = 0;
+const long blynkUpdateInterval = 5000;
 
 // Biến cho xử lý nút bấm
 bool lastButtonState = HIGH;
 unsigned long lastButtonPress = 0;
 const unsigned long buttonCooldown = 500;
-
-// Giới hạn gửi Blynk
-unsigned long lastBlynkUpdate = 0;
-const long blynkUpdateInterval = 5000;
 
 // ============ HÀM KHỞI TẠO ============
 void setup()
@@ -78,17 +85,127 @@ void setup()
   Serial.println(WiFi.localIP());
 
   Blynk.begin(BLYNK_AUTH_TOKEN, WIFI_SSID, WIFI_PASSWORD);
+  Serial.println("✓ Blynk đã kết nối!");
+
+  // Khởi tạo API endpoints
+  setupWebServer();
+
   Serial.println("✓ Hệ thống sẵn sàng!");
   digitalWrite(LED_STATUS, LOW);
+  Serial.println("\n📌 DEBUG: Nhấn nút, gửi IR, hoặc gọi API để test...");
+}
 
-  Serial.println("\n📌 DEBUG: Nhấn nút hoặc gửi IR để test...");
+// ============ KHỞI TẠO WEBSERVER ============
+void setupWebServer()
+{
+  // Root endpoint
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+            { request->send(200, "application/json", "{\"message\":\"AC Control API is running!\"}"); });
+
+  // Endpoint đọc sensor
+  server.on("/sensors", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+    StaticJsonDocument<200> doc;
+    doc["temperature"] = temperature;
+    doc["humidity"] = humidity;
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response); });
+
+  // Endpoint lấy trạng thái AC
+  server.on("/ac/status", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+    StaticJsonDocument<200> doc;
+    doc["status"] = acStatus;
+    doc["temp"] = acTemp;
+    doc["mode"] = acMode;
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response); });
+
+  // Endpoint gửi lệnh AC
+  server.on("/ac/command", HTTP_POST, [](AsyncWebServerRequest *request)
+            {
+    if (request->hasParam("body", true)) {
+      String body = request->getParam("body", true)->value();
+      StaticJsonDocument<200> doc;
+      DeserializationError error = deserializeJson(doc, body);
+      if (error) {
+        request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+        return;
+      }
+
+      if (doc.containsKey("status")) {
+        acStatus = doc["status"];
+        if (doc.containsKey("temp")) acTemp = doc["temp"];
+        if (doc.containsKey("mode")) acMode = doc["mode"].as<String>();
+        sendACCommand();
+        StaticJsonDocument<200> responseDoc;
+        responseDoc["status"] = acStatus;
+        responseDoc["temp"] = acTemp;
+        responseDoc["mode"] = acMode;
+        String response;
+        serializeJson(responseDoc, response);
+        request->send(200, "application/json", response);
+      } else {
+        request->send(400, "application/json", "{\"error\":\"Missing status field\"}");
+      }
+    } else {
+      request->send(400, "application/json", "{\"error\":\"No body provided\"}");
+    } });
+
+  // Endpoint mô phỏng nút bấm
+  server.on("/manual/button", HTTP_POST, [](AsyncWebServerRequest *request)
+            {
+    acStatus = !acStatus;
+    sendACCommand();
+    StaticJsonDocument<200> doc;
+    doc["status"] = acStatus;
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response); });
+
+  // Endpoint nhận IR
+  server.on("/ir/receive", HTTP_POST, [](AsyncWebServerRequest *request)
+            {
+    if (request->hasParam("body", true)) {
+      String body = request->getParam("body", true)->value();
+      StaticJsonDocument<200> doc;
+      DeserializationError error = deserializeJson(doc, body);
+      if (error) {
+        request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+        return;
+      }
+
+      if (doc.containsKey("code")) {
+        uint32_t code = doc["code"];
+        Serial.printf("📡 Nhận IR qua API: 0x%lX\n", code);
+        if (code == 1) {
+          acStatus = true;
+          sendACCommand();
+          request->send(200, "application/json", "{\"message\":\"Turn ON AC\"}");
+        } else if (code == 2) {
+          acStatus = false;
+          sendACCommand();
+          request->send(200, "application/json", "{\"message\":\"Turn OFF AC\"}");
+        } else {
+          request->send(200, "application/json", "{\"message\":\"Unknown IR code\"}");
+        }
+      } else {
+        request->send(400, "application/json", "{\"error\":\"Missing code field\"}");
+      }
+    } else {
+      request->send(400, "application/json", "{\"error\":\"No body provided\"}");
+    } });
+
+  server.begin();
+  Serial.println("✓ WebServer đã khởi tạo!");
 }
 
 // ============ GỬI LỆNH IR ĐẾN ĐIỀU HÒA ============
 void sendACCommand()
 {
   Serial.println("→ Gửi lệnh IR đến điều hòa");
-
   uint32_t codeOn = 0x00020906;
   uint32_t codeOff = 0x00029069;
 
@@ -180,7 +297,6 @@ void receiveIR()
     Serial.println();
     uint32_t code = results.value;
 
-    // === XỬ LÝ LỆNH GIẢ LẬP TỪ WOKWI ===
     if (code == 1)
     {
       Serial.println("🟢 Nhận lệnh IR: BẬT điều hòa");
