@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AC Controller - Secure</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .config-section {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .config-section h3 {
+            color: #856404;
+            margin-bottom: 10px;
+        }
+
+        .config-input {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .btn-save-config {
+            width: 100%;
+            padding: 10px;
+            background: #ffc107;
+            color: #000;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+
+        .online {
+            background: #4ade80;
+            color: white;
+        }
+
+        .offline {
+            background: #ef4444;
+            color: white;
+        }
+
+        .sensor-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .sensor-box {
+            background: #f3f4f6;
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+        }
+
+        .sensor-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .sensor-label {
+            color: #6b7280;
+            margin-top: 5px;
+            font-size: 14px;
+        }
+
+        .ac-status {
+            text-align: center;
+            padding: 20px;
+            background: #f9fafb;
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+
+        .ac-status.on {
+            background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+            color: white;
+        }
+
+        .ac-status.off {
+            background: #e5e7eb;
+            color: #6b7280;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-on {
+            background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+            color: white;
+        }
+
+        .btn-off {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+        }
+
+        .btn-toggle {
+            grid-column: 1 / -1;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .temp-control {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #f3f4f6;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
+        .temp-control button {
+            width: 40px;
+            height: 40px;
+            border: none;
+            border-radius: 50%;
+            background: #667eea;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+        }
+
+        .temp-control button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .temp-display {
+            font-size: 32px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .security-info {
+            background: #d1fae5;
+            border: 2px solid #10b981;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .security-info strong {
+            color: #047857;
+        }
+
+        .error-message {
+            background: #fee2e2;
+            border: 2px solid #ef4444;
+            color: #991b1b;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- CẤU HÌNH -->
+        <div class="card config-section">
+            <h3>⚙️ Cấu hình kết nối</h3>
+            <input type="text" class="config-input" id="esp32Url" placeholder="ESP32 URL (VD: http://localhost:8080)"
+                value="http://localhost:8080">
+            <input type="text" class="config-input" id="apiKey" placeholder="API Key"
+                value="AC_SECRET_KEY_2024_CHANGE_THIS">
+            <button class="btn-save-config" onclick="saveConfig()">💾 Lưu cấu hình</button>
+            <div class="error-message" id="errorMsg"></div>
+        </div>
+
+        <!-- GIAO DIỆN CHÍNH -->
+        <div class="card">
+            <h1>🌡️ AC Controller</h1>
+            <div style="text-align: center;">
+                <span class="status-badge offline" id="statusBadge">⚪ Chưa kết nối</span>
+            </div>
+
+            <!-- Cảm biến -->
+            <div class="sensor-grid">
+                <div class="sensor-box">
+                    <div class="sensor-value" id="tempValue">--</div>
+                    <div class="sensor-label">Nhiệt độ (°C)</div>
+                </div>
+                <div class="sensor-box">
+                    <div class="sensor-value" id="humValue">--</div>
+                    <div class="sensor-label">Độ ẩm (%)</div>
+                </div>
+            </div>
+
+            <!-- Trạng thái AC -->
+            <div class="ac-status off" id="acStatus">
+                <h2 id="acStatusText">Điều hòa: ĐANG TẮT</h2>
+                <p id="acTempText">25°C | COOL</p>
+            </div>
+
+            <!-- Điều khiển nhiệt độ -->
+            <div class="temp-control">
+                <button onclick="changeTemp(-1)" id="btnTempDown">-</button>
+                <div class="temp-display" id="targetTemp">25°C</div>
+                <button onclick="changeTemp(1)" id="btnTempUp">+</button>
+            </div>
+
+            <!-- Nút điều khiển -->
+            <div class="controls">
+                <button class="btn btn-on" onclick="turnOn()" id="btnOn">🟢 BẬT</button>
+                <button class="btn btn-off" onclick="turnOff()" id="btnOff">🔴 TẮT</button>
+                <button class="btn btn-toggle" onclick="toggle()" id="btnToggle">🔄 TOGGLE</button>
+            </div>
+
+            <!-- Thông tin bảo mật -->
+            <div class="security-info">
+                <strong>🔒 Bảo mật:</strong> API được bảo vệ bằng API Key
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // CẤU HÌNH
+        let ESP32_URL = localStorage.getItem('esp32_url') || 'http://localhost:8080';
+        let API_KEY = localStorage.getItem('api_key') || 'AC_SECRET_KEY_2024_CHANGE_THIS';
+        let currentTemp = 25;
+        let autoUpdateInterval = null;
+
+        // Load config vào form
+        document.getElementById('esp32Url').value = ESP32_URL;
+        document.getElementById('apiKey').value = API_KEY;
+
+        function saveConfig() {
+            ESP32_URL = document.getElementById('esp32Url').value.trim();
+            API_KEY = document.getElementById('apiKey').value.trim();
+
+            if (!ESP32_URL || !API_KEY) {
+                showError('Vui lòng nhập đầy đủ URL và API Key!');
+                return;
+            }
+
+            localStorage.setItem('esp32_url', ESP32_URL);
+            localStorage.setItem('api_key', API_KEY);
+
+            hideError();
+            alert('✅ Đã lưu cấu hình!');
+            updateData(); // Test kết nối ngay
+        }
+
+        function showError(msg) {
+            const errorEl = document.getElementById('errorMsg');
+            errorEl.textContent = msg;
+            errorEl.style.display = 'block';
+        }
+
+        function hideError() {
+            document.getElementById('errorMsg').style.display = 'none';
+        }
+
+        // GỌI API ESP32
+        async function callAPI(endpoint, method = 'GET', body = null) {
+            try {
+                const options = {
+                    method: method,
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Content-Type': 'application/json'
+                    }
+                };
+
+                if (body) {
+                    options.body = JSON.stringify(body);
+                }
+
+                const response = await fetch(`${ESP32_URL}${endpoint}`, options);
+
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        throw new Error('API Key không đúng!');
+                    }
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                showError(`Lỗi: ${error.message}`);
+                return null;
+            }
+        }
+
+        // CẬP NHẬT DỮ LIỆU
+        async function updateData() {
+            try {
+                const [sensors, status] = await Promise.all([
+                    callAPI('/sensors'),
+                    callAPI('/ac/status')
+                ]);
+
+                if (!sensors || !status) {
+                    document.getElementById('statusBadge').textContent = '🔴 Offline';
+                    document.getElementById('statusBadge').className = 'status-badge offline';
+                    disableControls(true);
+                    return;
+                }
+
+                // Cập nhật cảm biến
+                document.getElementById('tempValue').textContent = sensors.temperature.toFixed(1);
+                document.getElementById('humValue').textContent = sensors.humidity.toFixed(1);
+
+                // Cập nhật trạng thái AC
+                const acStatusDiv = document.getElementById('acStatus');
+                if (status.status) {
+                    acStatusDiv.className = 'ac-status on';
+                    document.getElementById('acStatusText').textContent = 'Điều hòa: ĐANG BẬT';
+                } else {
+                    acStatusDiv.className = 'ac-status off';
+                    document.getElementById('acStatusText').textContent = 'Điều hòa: ĐANG TẮT';
+                }
+                document.getElementById('acTempText').textContent =
+                    `${status.temp}°C | ${status.mode}`;
+                currentTemp = status.temp;
+                document.getElementById('targetTemp').textContent = `${currentTemp}°C`;
+
+                // Cập nhật badge
+                document.getElementById('statusBadge').textContent = '🟢 Online';
+                document.getElementById('statusBadge').className = 'status-badge online';
+
+                hideError();
+                disableControls(false);
+
+            } catch (error) {
+                console.error('Update Error:', error);
+                document.getElementById('statusBadge').textContent = '🔴 Lỗi';
+                document.getElementById('statusBadge').className = 'status-badge offline';
+                disableControls(true);
+            }
+        }
+
+        function disableControls(disabled) {
+            document.getElementById('btnOn').disabled = disabled;
+            document.getElementById('btnOff').disabled = disabled;
+            document.getElementById('btnToggle').disabled = disabled;
+            document.getElementById('btnTempDown').disabled = disabled;
+            document.getElementById('btnTempUp').disabled = disabled;
+        }
+
+        // ĐIỀU KHIỂN AC
+        async function turnOn() {
+            const result = await callAPI('/ac/on', 'POST', { temp: currentTemp });
+            if (result) {
+                setTimeout(updateData, 300);
+            }
+        }
+
+        async function turnOff() {
+            const result = await callAPI('/ac/off', 'POST');
+            if (result) {
+                setTimeout(updateData, 300);
+            }
+        }
+
+        async function toggle() {
+            const result = await callAPI('/manual/button', 'POST');
+            if (result) {
+                setTimeout(updateData, 300);
+            }
+        }
+
+        function changeTemp(delta) {
+            currentTemp = Math.max(16, Math.min(30, currentTemp + delta));
+            document.getElementById('targetTemp').textContent = `${currentTemp}°C`;
+        }
+
+        // TỰ ĐỘNG CẬP NHẬT
+        function startAutoUpdate() {
+            if (autoUpdateInterval) {
+                clearInterval(autoUpdateInterval);
+            }
+            autoUpdateInterval = setInterval(updateData, 5000); // 5 giây
+        }
+
+        // KHỞI ĐỘNG
+        updateData();
+        startAutoUpdate();
+    </script>
+</body>
+
+</html>
