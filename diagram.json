@@ -1,0 +1,232 @@
+{
+  "version": 1,
+  "author": "AC Remote Control System",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht",
+      "top": -67.6,
+      "left": 105.6,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-ir-sender",
+      "id": "ir_sender",
+      "top": -96,
+      "left": 230.4,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-ir-receiver",
+      "id": "ir_receiver",
+      "top": -96,
+      "left": 326.4,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_status",
+      "top": 124.8,
+      "left": 230.4,
+      "attrs": {
+        "color": "green"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_wifi",
+      "top": 124.8,
+      "left": 278.4,
+      "attrs": {
+        "color": "blue"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 144,
+      "left": 220.8,
+      "attrs": {
+        "value": "220"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 144,
+      "left": 268.8,
+      "attrs": {
+        "value": "220"
+      }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn_manual",
+      "top": 220.8,
+      "left": 230.4,
+      "attrs": {
+        "color": "red",
+        "bounce": "0"
+      }
+    }
+  ],
+  "connections": [
+    [
+      "esp:TX0",
+      "$serialMonitor:RX",
+      "",
+      []
+    ],
+    [
+      "esp:RX0",
+      "$serialMonitor:TX",
+      "",
+      []
+    ],
+    [
+      "dht:VCC",
+      "esp:3V3",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "dht:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "dht:SDA",
+      "esp:D4",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "ir_sender:VCC",
+      "esp:3V3",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "ir_sender:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "ir_sender:DAT",
+      "esp:D5",
+      "purple",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "ir_receiver:VCC",
+      "esp:3V3",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "ir_receiver:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "ir_receiver:DAT",
+      "esp:D18",
+      "orange",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "led_status:A",
+      "r1:1",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "r1:2",
+      "esp:D2",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "led_status:C",
+      "esp:GND.2",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "led_wifi:A",
+      "r2:1",
+      "blue",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "r2:2",
+      "esp:D15",
+      "blue",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "led_wifi:C",
+      "esp:GND.2",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "btn_manual:1.l",
+      "esp:D19",
+      "yellow",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "btn_manual:2.r",
+      "esp:GND.2",
+      "black",
+      [
+        "v0"
+      ]
+    ]
+  ],
+  "dependencies": {}
+}
