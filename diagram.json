@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "author": "AC Remote Control System",
+  "author": "AC Control System with LLM Integration",
   "editor": "wokwi",
   "parts": [
     {
@@ -32,6 +32,27 @@
       "attrs": {}
     },
     {
+      "type": "wokwi-pir",
+      "id": "pir",
+      "top": -96,
+      "left": 422.4,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-photoresistor-sensor",
+      "id": "ldr",
+      "top": -67.6,
+      "left": 518.4,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-ds1307",
+      "id": "rtc",
+      "top": -192,
+      "left": -192,
+      "attrs": {}
+    },
+    {
       "type": "wokwi-led",
       "id": "led_status",
       "top": 124.8,
@@ -47,6 +68,24 @@
       "left": 278.4,
       "attrs": {
         "color": "blue"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_error",
+      "top": 124.8,
+      "left": 326.4,
+      "attrs": {
+        "color": "red"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_llm",
+      "top": 124.8,
+      "left": 374.4,
+      "attrs": {
+        "color": "yellow"
       }
     },
     {
@@ -68,6 +107,24 @@
       }
     },
     {
+      "type": "wokwi-resistor",
+      "id": "r3",
+      "top": 144,
+      "left": 316.8,
+      "attrs": {
+        "value": "220"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r4",
+      "top": 144,
+      "left": 364.8,
+      "attrs": {
+        "value": "220"
+      }
+    },
+    {
       "type": "wokwi-pushbutton",
       "id": "btn_manual",
       "top": 220.8,
@@ -76,6 +133,39 @@
         "color": "red",
         "bounce": "0"
       }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn_llm",
+      "top": 220.8,
+      "left": 326.4,
+      "attrs": {
+        "color": "blue",
+        "bounce": "0"
+      }
+    },
+    {
+      "type": "wokwi-lcd1602",
+      "id": "lcd",
+      "top": -144,
+      "left": -192,
+      "attrs": {
+        "pins": "i2c"
+      }
+    },
+    {
+      "type": "wokwi-relay-module",
+      "id": "relay",
+      "top": 67.2,
+      "left": 614.4,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "buzzer",
+      "top": 220.8,
+      "left": 470.4,
+      "attrs": {}
     }
   ],
   "connections": [
@@ -164,6 +254,86 @@
       ]
     ],
     [
+      "pir:VCC",
+      "esp:3V3",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "pir:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "pir:OUT",
+      "esp:D25",
+      "yellow",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "ldr:VCC",
+      "esp:3V3",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "ldr:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "ldr:AO",
+      "esp:D34",
+      "brown",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "rtc:5V",
+      "esp:5V",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "rtc:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "rtc:SDA",
+      "esp:D21",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "rtc:SCL",
+      "esp:D22",
+      "cyan",
+      [
+        "v0"
+      ]
+    ],
+    [
       "led_status:A",
       "r1:1",
       "green",
@@ -212,6 +382,54 @@
       ]
     ],
     [
+      "led_error:A",
+      "r3:1",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "r3:2",
+      "esp:D13",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "led_error:C",
+      "esp:GND.2",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "led_llm:A",
+      "r4:1",
+      "yellow",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "r4:2",
+      "esp:D14",
+      "yellow",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "led_llm:C",
+      "esp:GND.2",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
       "btn_manual:1.l",
       "esp:D19",
       "yellow",
@@ -221,6 +439,94 @@
     ],
     [
       "btn_manual:2.r",
+      "esp:GND.2",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "btn_llm:1.l",
+      "esp:D27",
+      "blue",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "btn_llm:2.r",
+      "esp:GND.2",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "lcd:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "lcd:VCC",
+      "esp:5V",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "lcd:SDA",
+      "esp:D21",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "lcd:SCL",
+      "esp:D22",
+      "cyan",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "relay:VCC",
+      "esp:5V",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "relay:GND",
+      "esp:GND.2",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "relay:IN",
+      "esp:D23",
+      "orange",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "buzzer:1",
+      "esp:D12",
+      "purple",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "buzzer:2",
       "esp:GND.2",
       "black",
       [

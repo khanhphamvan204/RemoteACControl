@@ -5,7 +5,7 @@ firmware = ".pio/build/esp32dev/firmware.bin"
 
 # Cấu hình WiFi cho simulation
 [[net.forward]]
-from = "localhost:8080" 
+from = "localhost:3636" 
 to = "target:80"             
 
 # Serial Monitor
