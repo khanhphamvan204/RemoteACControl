@@ -13,50 +13,66 @@
     {
       "type": "wokwi-dht22",
       "id": "dht",
-      "top": -67.6,
-      "left": 105.6,
+      "top": -48,
+      "left": 240,
       "attrs": {}
     },
     {
-      "type": "wokwi-ir-sender",
-      "id": "ir_sender",
-      "top": -96,
-      "left": 230.4,
+      "type": "wokwi-ir-remote",
+      "id": "ir_remote",
+      "top": -260,
+      "left": 800,
       "attrs": {}
     },
     {
       "type": "wokwi-ir-receiver",
       "id": "ir_receiver",
-      "top": -96,
-      "left": 326.4,
+      "top": -48,
+      "left": 336,
       "attrs": {}
     },
     {
-      "type": "wokwi-pir",
+      "type": "wokwi-pir-motion-sensor",
       "id": "pir",
-      "top": -96,
-      "left": 422.4,
+      "top": -48,
+      "left": 432,
       "attrs": {}
     },
     {
       "type": "wokwi-photoresistor-sensor",
       "id": "ldr",
-      "top": -67.6,
-      "left": 518.4,
+      "top": -48,
+      "left": 528,
       "attrs": {}
     },
     {
       "type": "wokwi-ds1307",
       "id": "rtc",
-      "top": -192,
-      "left": -192,
+      "top": -240,
+      "left": -96,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-lcd1602",
+      "id": "lcd",
+      "top": -240,
+      "left": 192,
+      "attrs": {
+        "pins": "i2c"
+      }
+    },
+    {
+      "type": "wokwi-relay-module",
+      "id": "relay",
+      "top": 96,
+      "left": 528,
       "attrs": {}
     },
     {
       "type": "wokwi-led",
       "id": "led_status",
-      "top": 124.8,
-      "left": 230.4,
+      "top": 240,
+      "left": 192,
       "attrs": {
         "color": "green"
       }
@@ -64,8 +80,8 @@
     {
       "type": "wokwi-led",
       "id": "led_wifi",
-      "top": 124.8,
-      "left": 278.4,
+      "top": 240,
+      "left": 240,
       "attrs": {
         "color": "blue"
       }
@@ -73,8 +89,8 @@
     {
       "type": "wokwi-led",
       "id": "led_error",
-      "top": 124.8,
-      "left": 326.4,
+      "top": 240,
+      "left": 288,
       "attrs": {
         "color": "red"
       }
@@ -82,8 +98,8 @@
     {
       "type": "wokwi-led",
       "id": "led_llm",
-      "top": 124.8,
-      "left": 374.4,
+      "top": 240,
+      "left": 336,
       "attrs": {
         "color": "yellow"
       }
@@ -91,8 +107,8 @@
     {
       "type": "wokwi-resistor",
       "id": "r1",
-      "top": 144,
-      "left": 220.8,
+      "top": 259.2,
+      "left": 182.4,
       "attrs": {
         "value": "220"
       }
@@ -100,8 +116,8 @@
     {
       "type": "wokwi-resistor",
       "id": "r2",
-      "top": 144,
-      "left": 268.8,
+      "top": 259.2,
+      "left": 230.4,
       "attrs": {
         "value": "220"
       }
@@ -109,8 +125,8 @@
     {
       "type": "wokwi-resistor",
       "id": "r3",
-      "top": 144,
-      "left": 316.8,
+      "top": 259.2,
+      "left": 278.4,
       "attrs": {
         "value": "220"
       }
@@ -118,8 +134,8 @@
     {
       "type": "wokwi-resistor",
       "id": "r4",
-      "top": 144,
-      "left": 364.8,
+      "top": 259.2,
+      "left": 326.4,
       "attrs": {
         "value": "220"
       }
@@ -127,8 +143,8 @@
     {
       "type": "wokwi-pushbutton",
       "id": "btn_manual",
-      "top": 220.8,
-      "left": 230.4,
+      "top": 336,
+      "left": 192,
       "attrs": {
         "color": "red",
         "bounce": "0"
@@ -137,34 +153,18 @@
     {
       "type": "wokwi-pushbutton",
       "id": "btn_llm",
-      "top": 220.8,
-      "left": 326.4,
+      "top": 336,
+      "left": 288,
       "attrs": {
         "color": "blue",
         "bounce": "0"
       }
     },
     {
-      "type": "wokwi-lcd1602",
-      "id": "lcd",
-      "top": -144,
-      "left": -192,
-      "attrs": {
-        "pins": "i2c"
-      }
-    },
-    {
-      "type": "wokwi-relay-module",
-      "id": "relay",
-      "top": 67.2,
-      "left": 614.4,
-      "attrs": {}
-    },
-    {
       "type": "wokwi-buzzer",
       "id": "buzzer",
-      "top": 220.8,
-      "left": 470.4,
+      "top": 336,
+      "left": 432,
       "attrs": {}
     }
   ],
@@ -186,7 +186,7 @@
       "esp:3V3",
       "red",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -194,7 +194,7 @@
       "esp:GND.1",
       "black",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -202,31 +202,7 @@
       "esp:D4",
       "green",
       [
-        "v0"
-      ]
-    ],
-    [
-      "ir_sender:VCC",
-      "esp:3V3",
-      "red",
-      [
-        "v0"
-      ]
-    ],
-    [
-      "ir_sender:GND",
-      "esp:GND.1",
-      "black",
-      [
-        "v0"
-      ]
-    ],
-    [
-      "ir_sender:DAT",
-      "esp:D5",
-      "purple",
-      [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -234,7 +210,7 @@
       "esp:3V3",
       "red",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -242,7 +218,7 @@
       "esp:GND.1",
       "black",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -250,7 +226,7 @@
       "esp:D18",
       "orange",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -258,7 +234,7 @@
       "esp:3V3",
       "red",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -266,7 +242,7 @@
       "esp:GND.1",
       "black",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -274,7 +250,7 @@
       "esp:D25",
       "yellow",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -282,7 +258,7 @@
       "esp:3V3",
       "red",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -290,7 +266,7 @@
       "esp:GND.1",
       "black",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -298,7 +274,7 @@
       "esp:D34",
       "brown",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -306,7 +282,7 @@
       "esp:5V",
       "red",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -314,7 +290,7 @@
       "esp:GND.1",
       "black",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -322,7 +298,7 @@
       "esp:D21",
       "green",
       [
-        "v0"
+        "h0"
       ]
     ],
     [
@@ -330,7 +306,63 @@
       "esp:D22",
       "cyan",
       [
-        "v0"
+        "h0"
+      ]
+    ],
+    [
+      "lcd:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "lcd:VCC",
+      "esp:5V",
+      "red",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "lcd:SDA",
+      "esp:D21",
+      "green",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "lcd:SCL",
+      "esp:D22",
+      "cyan",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "relay:VCC",
+      "esp:5V",
+      "red",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "relay:GND",
+      "esp:GND.2",
+      "black",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "relay:IN",
+      "esp:D23",
+      "orange",
+      [
+        "h0"
       ]
     ],
     [
@@ -457,62 +489,6 @@
       "btn_llm:2.r",
       "esp:GND.2",
       "black",
-      [
-        "v0"
-      ]
-    ],
-    [
-      "lcd:GND",
-      "esp:GND.1",
-      "black",
-      [
-        "v0"
-      ]
-    ],
-    [
-      "lcd:VCC",
-      "esp:5V",
-      "red",
-      [
-        "v0"
-      ]
-    ],
-    [
-      "lcd:SDA",
-      "esp:D21",
-      "green",
-      [
-        "v0"
-      ]
-    ],
-    [
-      "lcd:SCL",
-      "esp:D22",
-      "cyan",
-      [
-        "v0"
-      ]
-    ],
-    [
-      "relay:VCC",
-      "esp:5V",
-      "red",
-      [
-        "v0"
-      ]
-    ],
-    [
-      "relay:GND",
-      "esp:GND.2",
-      "black",
-      [
-        "v0"
-      ]
-    ],
-    [
-      "relay:IN",
-      "esp:D23",
-      "orange",
       [
         "v0"
       ]

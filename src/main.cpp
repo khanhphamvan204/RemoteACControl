@@ -3,7 +3,6 @@
 #include <HTTPClient.h>
 #include <DHT.h>
 #include <IRremoteESP8266.h>
-#include <IRsend.h>
 #include <IRrecv.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
@@ -14,7 +13,6 @@
 
 // ============ CẤU HÌNH CHÂN ============
 #define DHT_PIN 4
-#define IR_SEND_PIN 5
 #define IR_RECV_PIN 18
 #define PIR_PIN 25
 #define LDR_PIN 34
@@ -27,6 +25,13 @@
 #define RELAY_PIN 23
 #define BUZZER_PIN 12
 
+// ============ MÃ IR REMOTE ============
+#define IR_POWER 0xff45ba     // Nút Power - Bật/Tắt AC
+#define IR_TEMP_UP 0xffa15e   // Nút VOL+ - Tăng nhiệt độ
+#define IR_TEMP_DOWN 0xff19e6 // Nút VOL- - Giảm nhiệt độ
+#define IR_MODE 0xff629d      // Nút CH+ - Đổi chế độ
+#define IR_FAN 0xffe21d       // Nút CH- - Đổi tốc độ quạt
+
 // ============ CẤU HÌNH WIFI ============
 #define WIFI_SSID "Wokwi-GUEST"
 #define WIFI_PASSWORD ""
@@ -38,7 +43,6 @@
 // ============ KHỞI TẠO THIẾT BỊ ============
 #define DHT_TYPE DHT22
 DHT dht(DHT_PIN, DHT_TYPE);
-IRsend irsend(IR_SEND_PIN);
 IRrecv irrecv(IR_RECV_PIN);
 decode_results results;
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -65,8 +69,7 @@ bool llmEnabled = true;
 bool llmProcessing = false;
 String lastLLMResponse = "";
 unsigned long lastLLMRequest = 0;
-// ĐÃ BỎ COOLDOWN - set về 0
-const unsigned long llmCooldown = 0; // ← BỎ COOLDOWN
+const unsigned long llmCooldown = 0;
 bool useMockLLM = false;
 
 unsigned long totalRequests = 0;
@@ -191,9 +194,11 @@ void updateLCD()
     lcd.print(acTemp);
     lcd.print("C ");
     lcd.print(acMode.substring(0, 3));
+    lcd.print(" F");
+    lcd.print(acFan);
     if (llmEnabled)
     {
-      lcd.setCursor(13, 1);
+      lcd.setCursor(14, 1);
       lcd.print("AI");
     }
   }
@@ -204,17 +209,13 @@ void updateLCD()
   }
 }
 
-// ============ GỬI LỆNH IR & RELAY ============
+// ============ GỬI LỆNH RELAY ============
 void sendACCommand()
 {
   addLog("INFO", "AC: " + String(acStatus ? "ON" : "OFF") + " " + String(acTemp) + "C");
 
-  uint32_t codeOn = 0x00020906;
-  uint32_t codeOff = 0x00029069;
-
   if (acStatus)
   {
-    irsend.sendNEC(codeOn, 32);
     digitalWrite(LED_STATUS, HIGH);
     digitalWrite(RELAY_PIN, HIGH);
     relayStatus = true;
@@ -222,7 +223,6 @@ void sendACCommand()
   }
   else
   {
-    irsend.sendNEC(codeOff, 32);
     digitalWrite(LED_STATUS, LOW);
     digitalWrite(RELAY_PIN, LOW);
     relayStatus = false;
@@ -292,8 +292,6 @@ String callLLM(String userMessage)
     return "{\"error\":\"busy\"}";
   }
 
-  // ĐÃ BỎ CHECK COOLDOWN - cho phép gọi liên tục
-
   llmProcessing = true;
   digitalWrite(LED_LLM, HIGH);
 
@@ -323,7 +321,6 @@ String callLLM(String userMessage)
     http.addHeader("Content-Type", "application/json");
     http.setTimeout(20000);
 
-    // Context ngắn gọn
     String context = "T:" + String(temperature, 1) +
                      "C H:" + String(humidity, 0) +
                      "% L:" + String(lightLevel) +
@@ -331,7 +328,6 @@ String callLLM(String userMessage)
                      " AC:" + String(acStatus ? "ON" : "OFF") +
                      String(acTemp) + "C";
 
-    // Body đơn giản
     DynamicJsonDocument requestDoc(512);
     requestDoc["query"] = context + ". " + userMessage;
 
@@ -396,7 +392,6 @@ void processLLMDecision(String llmResponse)
 {
   addLog("INFO", "Process LLM...");
 
-  // Kiểm tra error trước
   if (llmResponse.indexOf("\"error\"") != -1)
   {
     addLog("ERROR", "LLM returned error");
@@ -473,20 +468,17 @@ void autoLLMOptimize()
   static float lastTemp = 0;
   static bool lastMotion = false;
 
-  // Giảm thời gian check xuống 60s thay vì 300s
   if (millis() - lastCheck < 60000)
     return;
 
   bool trigger = false;
 
-  // Trigger nếu nhiệt độ thay đổi > 1.5°C
   if (abs(temperature - lastTemp) > 1.5)
   {
     addLog("INFO", "Temp changed: " + String(lastTemp) + " -> " + String(temperature));
     trigger = true;
   }
 
-  // Trigger nếu phát hiện/mất người
   if (motionDetected != lastMotion)
   {
     addLog("INFO", "Motion changed: " + String(lastMotion) + " -> " + String(motionDetected));
@@ -498,7 +490,6 @@ void autoLLMOptimize()
     addLog("INFO", "Auto LLM triggered");
     String response = callLLM("Analyze and optimize AC based on current conditions");
 
-    // ĐẢM BẢO XỬ LÝ RESPONSE
     if (response.length() > 0 && response.indexOf("error") == -1)
     {
       processLLMDecision(response);
@@ -541,7 +532,6 @@ void handleButtons()
     addLog("INFO", "LLM btn pressed");
     String response = callLLM("User pressed button - please optimize AC");
 
-    // ĐẢM BẢO XỬ LÝ RESPONSE
     if (response.length() > 0 && response.indexOf("error") == -1)
     {
       processLLMDecision(response);
@@ -563,17 +553,87 @@ void receiveIR()
 {
   if (irrecv.decode(&results))
   {
-    addLog("INFO", "IR: 0x" + String(results.value, HEX));
+    uint32_t irCode = results.value;
+    addLog("INFO", "IR: 0x" + String(irCode, HEX));
 
-    if (results.value == 0x00020906)
+    // Bỏ qua mã lặp
+    if (irCode == 0xFFFFFFFF)
     {
-      acStatus = true;
-      sendACCommand();
+      irrecv.resume();
+      return;
     }
-    else if (results.value == 0x40bf906f)
+
+    switch (irCode)
     {
-      acStatus = false;
+    case IR_POWER: // Nút Power - Bật/Tắt
+      acStatus = !acStatus;
       sendACCommand();
+      addLog("SUCCESS", "IR Power: " + String(acStatus ? "ON" : "OFF"));
+      beep(100, 1);
+      break;
+
+    case IR_TEMP_UP: // Nút VOL+ - Tăng nhiệt độ
+      if (acStatus && acTemp < 30)
+      {
+        acTemp++;
+        sendACCommand();
+        addLog("SUCCESS", "IR Temp UP: " + String(acTemp) + "C");
+        beep(50, 1);
+      }
+      else
+      {
+        addLog("WARN", "Cannot increase temp");
+        beep(100, 2);
+      }
+      break;
+
+    case IR_TEMP_DOWN: // Nút VOL- - Giảm nhiệt độ
+      if (acStatus && acTemp > 16)
+      {
+        acTemp--;
+        sendACCommand();
+        addLog("SUCCESS", "IR Temp DOWN: " + String(acTemp) + "C");
+        beep(50, 1);
+      }
+      else
+      {
+        addLog("WARN", "Cannot decrease temp");
+        beep(100, 2);
+      }
+      break;
+
+    case IR_MODE: // Nút CH+ - Đổi chế độ
+      if (acStatus)
+      {
+        if (acMode == "COOL")
+          acMode = "DRY";
+        else if (acMode == "DRY")
+          acMode = "FAN";
+        else
+          acMode = "COOL";
+
+        sendACCommand();
+        addLog("SUCCESS", "IR Mode: " + acMode);
+        beep(80, 1);
+      }
+      break;
+
+    case IR_FAN: // Nút CH- - Đổi tốc độ quạt
+      if (acStatus)
+      {
+        acFan++;
+        if (acFan > 3)
+          acFan = 1;
+
+        sendACCommand();
+        addLog("SUCCESS", "IR Fan: " + String(acFan));
+        beep(60, 1);
+      }
+      break;
+
+    default:
+      addLog("WARN", "Unknown IR: 0x" + String(irCode, HEX));
+      break;
     }
 
     irrecv.resume();
@@ -607,7 +667,7 @@ void setupWebServer()
 {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
             { request->send(200, "application/json",
-                            "{\"name\":\"AC Control\",\"version\":\"4.3\",\"status\":\"ok\"}"); });
+                            "{\"name\":\"AC Control\",\"version\":\"4.4-IR\",\"status\":\"ok\"}"); });
 
   server.on("/sensors", HTTP_GET, [](AsyncWebServerRequest *request)
             {
@@ -623,6 +683,8 @@ void setupWebServer()
     doc["motion"] = motionDetected;
     doc["ac_status"] = acStatus;
     doc["ac_temp"] = acTemp;
+    doc["ac_mode"] = acMode;
+    doc["ac_fan"] = acFan;
     doc["llm_enabled"] = llmEnabled;
     
     String response;
@@ -643,7 +705,6 @@ void setupWebServer()
       addLog("INFO", "POST /llm/query");
       String response = callLLM(query);
       
-      // TỰ ĐỘNG XỬ LÝ QUYẾT ĐỊNH
       if (response.length() > 0 && response.indexOf("error") == -1)
       {
         processLLMDecision(response);
@@ -661,7 +722,6 @@ void setupWebServer()
     addLog("INFO", "POST /llm/control");
     String response = callLLM("Optimize AC settings based on current conditions");
     
-    // ĐẢM BẢO XỬ LÝ QUYẾT ĐỊNH
     bool success = false;
     if (response.length() > 0 && response.indexOf("error") == -1)
     {
@@ -686,16 +746,6 @@ void setupWebServer()
     request->send(200, "application/json", 
       "{\"llm\":\"" + String(llmEnabled ? "on" : "off") + "\"}"); });
 
-  server.on("/llm/mode", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    request->send(200, "application/json", 
-      "{\"mode\":\"" + String(useMockLLM ? "mock" : "real") + "\"}"); });
-
   server.on("/stats", HTTP_GET, [](AsyncWebServerRequest *request)
             {
     if (!authenticateRequest(request)) {
@@ -708,31 +758,10 @@ void setupWebServer()
     doc["llm_requests"] = llmRequests;
     doc["temperature"] = temperature;
     doc["ac_status"] = acStatus;
+    doc["ac_temp"] = acTemp;
+    doc["ac_mode"] = acMode;
+    doc["ac_fan"] = acFan;
     doc["free_heap"] = ESP.getFreeHeap();
-    doc["llm_enabled"] = llmEnabled;
-    doc["llm_processing"] = llmProcessing;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  server.on("/logs", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    DynamicJsonDocument doc(4096);
-    JsonArray logs = doc.createNestedArray("logs");
-    
-    for (int i = 0; i < logCount; i++) {
-      int idx = (logIndex - logCount + i + MAX_LOGS) % MAX_LOGS;
-      JsonObject log = logs.createNestedObject();
-      log["time"] = logBuffer[idx].timestamp;
-      log["level"] = logBuffer[idx].level;
-      log["msg"] = logBuffer[idx].message;
-    }
     
     String response;
     serializeJson(doc, response);
@@ -750,6 +779,8 @@ void setupWebServer()
       
       if (doc.containsKey("status")) acStatus = doc["status"];
       if (doc.containsKey("temp")) acTemp = constrain(doc["temp"].as<int>(), 16, 30);
+      if (doc.containsKey("mode")) acMode = doc["mode"].as<String>();
+      if (doc.containsKey("fan")) acFan = constrain(doc["fan"].as<int>(), 1, 3);
       
       sendACCommand();
       request->send(200, "application/json", "{\"success\":true}"); });
@@ -766,8 +797,8 @@ void setup()
   delay(1000);
 
   Serial.println("\n╔═══════════════════════════╗");
-  Serial.println("║  AC CONTROL v4.3 + LLM   ║");
-  Serial.println("║    NO COOLDOWN FIXED     ║");
+  Serial.println("║  AC CONTROL v4.4 + IR    ║");
+  Serial.println("║   IR Remote Integrated   ║");
   Serial.println("╚═══════════════════════════╝");
 
   pinMode(LED_STATUS, OUTPUT);
@@ -793,9 +824,9 @@ void setup()
   lcd.backlight();
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("AC Control v4.3");
+  lcd.print("AC Control v4.4");
   lcd.setCursor(0, 1);
-  lcd.print("Init...");
+  lcd.print("IR Ready...");
   beep(100, 1);
 
   if (!rtc.begin())
@@ -810,9 +841,8 @@ void setup()
   dht.begin();
   delay(2000);
 
-  irsend.begin();
   irrecv.enableIRIn();
-  addLog("SUCCESS", "IR OK");
+  addLog("SUCCESS", "IR Receiver OK");
 
   lcd.clear();
   lcd.print("WiFi...");
@@ -858,17 +888,15 @@ void setup()
 
   addLog("SUCCESS", "Ready!");
   Serial.println("✓ System Ready!");
-  Serial.printf("🔐 API Key: %s\n", API_KEY);
-  Serial.printf("🎭 Mode: %s\n", useMockLLM ? "MOCK" : "REAL");
-  Serial.println("🚀 COOLDOWN: DISABLED");
-  Serial.println("📡 Endpoints:");
-  Serial.println("  /sensors - Sensor data");
-  Serial.println("  /llm/query - Query LLM (auto process)");
-  Serial.println("  /llm/control - Auto control");
-  Serial.println("  /stats - Statistics");
+  Serial.println("🎮 IR Remote Controls:");
+  Serial.println("  Power: 0xff40bf - ON/OFF");
+  Serial.println("  VOL+:  0xffa15e - Temp UP");
+  Serial.println("  VOL-:  0xff19e6 - Temp DOWN");
+  Serial.println("  CH+:   0xff629d - Mode");
+  Serial.println("  CH-:   0xffe21d - Fan Speed");
 
   lcd.clear();
-  lcd.print("Ready!");
+  lcd.print("Ready! IR:OK");
   lcd.setCursor(0, 1);
   lcd.print("AI:");
   lcd.print(llmEnabled ? "ON" : "OFF");
