@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "author": "AC Control System with LLM Integration",
+  "author": "AC Control System v5.5 - 3 Buttons (Test Mode)",
   "editor": "wokwi",
   "parts": [
     {
@@ -21,7 +21,7 @@
       "type": "wokwi-ir-remote",
       "id": "ir_remote",
       "top": -260,
-      "left": 800,
+      "left": 1000,
       "attrs": {}
     },
     {
@@ -46,6 +46,13 @@
       "attrs": {}
     },
     {
+      "type": "wokwi-hc-sr04",
+      "id": "radar",
+      "top": -48,
+      "left": 720,
+      "attrs": {}
+    },
+    {
       "type": "wokwi-ds1307",
       "id": "rtc",
       "top": -240,
@@ -60,13 +67,6 @@
       "attrs": {
         "pins": "i2c"
       }
-    },
-    {
-      "type": "wokwi-relay-module",
-      "id": "relay",
-      "top": 96,
-      "left": 528,
-      "attrs": {}
     },
     {
       "type": "wokwi-led",
@@ -97,7 +97,7 @@
     },
     {
       "type": "wokwi-led",
-      "id": "led_llm",
+      "id": "led_ai",
       "top": 240,
       "left": 336,
       "attrs": {
@@ -142,29 +142,46 @@
     },
     {
       "type": "wokwi-pushbutton",
-      "id": "btn_manual",
+      "id": "btn_power",
       "top": 336,
-      "left": 192,
+      "left": 144,
       "attrs": {
         "color": "red",
-        "bounce": "0"
+        "label": "AC ON/OFF"
       }
     },
     {
       "type": "wokwi-pushbutton",
-      "id": "btn_llm",
+      "id": "btn_ai",
       "top": 336,
-      "left": 288,
+      "left": 240,
       "attrs": {
         "color": "blue",
-        "bounce": "0"
+        "label": "AI MODE"
+      }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn_test_presence",
+      "top": 336,
+      "left": 336,
+      "attrs": {
+        "color": "green",
+        "label": "TEST PRESENCE"
       }
     },
     {
       "type": "wokwi-buzzer",
       "id": "buzzer",
       "top": 336,
-      "left": 432,
+      "left": 480,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-ir-transmitter",
+      "id": "ir_tx",
+      "top": -48,
+      "left": 816,
       "attrs": {}
     }
   ],
@@ -278,8 +295,40 @@
       ]
     ],
     [
-      "rtc:5V",
+      "radar:VCC",
       "esp:5V",
+      "red",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "radar:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "radar:ECHO",
+      "esp:D26",
+      "cyan",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "radar:TRIG",
+      "esp:D23",
+      "gray",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "rtc:VCC",
+      "esp:3V3",
       "red",
       [
         "h0"
@@ -337,30 +386,6 @@
       "lcd:SCL",
       "esp:D22",
       "cyan",
-      [
-        "h0"
-      ]
-    ],
-    [
-      "relay:VCC",
-      "esp:5V",
-      "red",
-      [
-        "h0"
-      ]
-    ],
-    [
-      "relay:GND",
-      "esp:GND.2",
-      "black",
-      [
-        "h0"
-      ]
-    ],
-    [
-      "relay:IN",
-      "esp:D23",
-      "orange",
       [
         "h0"
       ]
@@ -438,7 +463,7 @@
       ]
     ],
     [
-      "led_llm:A",
+      "led_ai:A",
       "r4:1",
       "yellow",
       [
@@ -454,7 +479,7 @@
       ]
     ],
     [
-      "led_llm:C",
+      "led_ai:C",
       "esp:GND.2",
       "black",
       [
@@ -462,7 +487,7 @@
       ]
     ],
     [
-      "btn_manual:1.l",
+      "btn_power:1.l",
       "esp:D19",
       "yellow",
       [
@@ -470,7 +495,7 @@
       ]
     ],
     [
-      "btn_manual:2.r",
+      "btn_power:2.r",
       "esp:GND.2",
       "black",
       [
@@ -478,7 +503,7 @@
       ]
     ],
     [
-      "btn_llm:1.l",
+      "btn_ai:1.l",
       "esp:D27",
       "blue",
       [
@@ -486,7 +511,23 @@
       ]
     ],
     [
-      "btn_llm:2.r",
+      "btn_ai:2.r",
+      "esp:GND.2",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "btn_test_presence:1.l",
+      "esp:D33",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "btn_test_presence:2.r",
       "esp:GND.2",
       "black",
       [
@@ -508,7 +549,30 @@
       [
         "v0"
       ]
+    ],
+    [
+      "ir_tx:VCC",
+      "esp:3V3",
+      "red",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "ir_tx:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "h0"
+      ]
+    ],
+    [
+      "ir_tx:IN",
+      "esp:D17",
+      "purple",
+      [
+        "h0"
+      ]
     ]
-  ],
-  "dependencies": {}
+  ]
 }
