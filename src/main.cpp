@@ -248,7 +248,7 @@ void updateLCD()
   if (presenceDetected)
   {
     lcd.setCursor(15, 0);
-    lcd.write(testPresenceMode ? 'T' : 0xFF); // Hiển thị 'T' nếu test mode, hoặc █ nếu thật
+    lcd.write(testPresenceMode ? 'T' : 0xFF);
   }
 
   // DÒNG 2: Trạng thái AC
@@ -381,7 +381,7 @@ String mockLLM(String userMessage)
     targetTemp = 26;
     reason = "High humidity";
   }
-  else if (lightLevel < 100 && now.hour() >= 22)
+  else if (lightLevel > 3000 && now.hour() >= 22)
   {
     if (acStatus && acTemp < 26)
     {
@@ -501,7 +501,7 @@ void autoLLMOptimize()
   static bool lastPresence = false;
   static bool lastAcStatus = false;
 
-  if (millis() - lastCheck < 30000)
+  if (millis() - lastCheck < 15000)
     return;
 
   bool trigger = false;
@@ -1207,8 +1207,7 @@ void setupWebServer()
     request->send(200, "application/json", response); });
 
   // POST AC temperature set (set trực tiếp)
-  server.on("/ac/temp/set", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, 
-    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+  server.on("/ac/temp/set", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
             {
       if (!authenticateRequest(request)) {
         request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
@@ -1289,8 +1288,7 @@ void setupWebServer()
     request->send(200, "application/json", response); });
 
   // POST AC mode set (set trực tiếp chế độ)
-  server.on("/ac/mode/set", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL,
-    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+  server.on("/ac/mode/set", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
             {
       if (!authenticateRequest(request)) {
         request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
@@ -1368,8 +1366,7 @@ void setupWebServer()
     request->send(200, "application/json", response); });
 
   // POST AC fan set (set trực tiếp mức quạt)
-  server.on("/ac/fan/set", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL,
-    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+  server.on("/ac/fan/set", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
             {
       if (!authenticateRequest(request)) {
         request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
