@@ -1,83 +1,91 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 import requests
 import json
 import re
+import os
+import tempfile
+from gtts import gTTS
+import hashlib
 
 app = Flask(__name__)
 
 API_KEY = "AC_SECRET_KEY_2024_LLM_V5"
-GEMINI_KEY = "AIzaSyBfwAhNb3W22MzaeKOh58ZPh_vlSHH1L2A"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GEMINI_KEY = "AIzaSyBp-SuhE11ZXJE-YPpUqAWOqS5wHQxUKWU"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
 
-# System prompt cho phân tích môi trường
-SYSTEM_PROMPT = """
-You are an intelligent AC control AI. Analyze environmental sensor data (temperature, humidity, CO2, light, motion, presence, AC status) and provide a JSON response to optimize AC settings for comfort and energy efficiency. Return:
-{
-  "action": "turn_on|turn_off|adjust|maintain",
-  "temperature": <16-30>,
-  "fan_speed": <1-3>,
-  "mode": "COOL|DRY|FAN",
-  "reason": "<concise explanation, max 30 chars>"
-}
-Consider: turn_on if too hot (>28°C) or humid (>70%), turn_off if no presence or cool enough (<23°C), adjust for minor tweaks, maintain if optimal.
-"""
+# Cache directory for TTS files
+TTS_CACHE_DIR = tempfile.gettempdir() + "/tts_cache"
+os.makedirs(TTS_CACHE_DIR, exist_ok=True)
 
-# System prompt cho voice command
+# ============ VOICE COMMAND PROMPT ============
 VOICE_PROMPT = """
-You are a friendly and helpful AC voice assistant named "Trợ lý AI". Analyze the user's voice command and current environment data to provide an appropriate AC control action.
+You are "Trợ lý AI" - a friendly Vietnamese-speaking AC voice assistant. Analyze user's voice command and provide appropriate AC control.
 
-User may say things like:
-- "Turn on the AC" / "Bật điều hòa"
-- "Make it cooler" / "Làm mát hơn"
-- "Turn off AC" / "Tắt điều hòa"
-- "Set temperature to 24" / "Đặt nhiệt độ 24 độ"
-- "It's too hot" / "Nóng quá"
-- "I'm cold" / "Lạnh quá"
-- "Switch to dry mode" / "Chuyển sang chế độ hút ẩm"
-
-Respond with JSON only:
+IMPORTANT: Respond with VALID JSON ONLY (no markdown, no code blocks):
 {
   "action": "turn_on|turn_off|adjust|maintain",
   "temperature": <16-30>,
-  "fan_speed": <1-3>,
-  "mode": "COOL|DRY|FAN",
-  "reason": "<friendly explanation in VIETNAMESE using 'mình' for 'I' and addressing user warmly>"
+  "fan_speed": "QUIET|LOW|MEDIUM|HIGH|AUTO",
+  "mode": "COOL|DRY|FAN|HEAT|AUTO",
+  "reason": "<friendly Vietnamese explanation, 50-100 chars>"
 }
 
-IMPORTANT: 
-- "reason" field MUST be in Vietnamese language
-- Use friendly tone: "mình đã...", "để bạn...", "cho bạn..."
-- Be conversational and warm like talking to a friend
+Understanding Commands:
+- Turn on: "bật", "mở", "turn on", "start", "power on"
+- Turn off: "tắt", "turn off", "stop", "power off"
+- Cooler: "mát hơn", "lạnh hơn", "cooler", "colder", "giảm nhiệt"
+- Warmer: "ấm hơn", "warmer", "tăng nhiệt"
+- Hot: "nóng", "hot" → Turn on with LOW temp (22-23°C)
+- Cold: "lạnh", "cold" → Turn off or INCREASE temp
+- Humid: "ẩm", "humid" → Use DRY mode
+- Set temp: "24 độ", "set to 24", "24 degrees"
+- Quiet: "yên tĩnh", "quiet", "im" → QUIET fan
+- Strong: "mạnh", "strong", "nhanh" → HIGH fan
+
+Response Style (Vietnamese):
+- Use friendly tone with "mình" (I) and "bạn" (you)
+- Example: "Bạn nói nóng quá nên mình đã bật điều hòa ở 22°C với quạt mạnh để làm mát nhanh cho bạn nhé!"
+- Be conversational and warm
 - Explain what you did and why
+- Keep explanations concise but friendly (50-100 chars)
 
-Examples of good "reason":
-- "Bạn nói nóng quá nên mình đã bật điều hòa ở 22°C để làm mát phòng cho bạn nhé!"
-- "Mình đã giảm nhiệt độ xuống 2°C như bạn yêu cầu, giờ là 24°C rồi!"
-- "Dạ, mình đã tắt điều hòa theo yêu cầu của bạn!"
+Smart Context Awareness:
+- If AC is OFF and user says "cooler" → Turn ON with low temp
+- If AC is ON and user says "warmer" → Increase temp or turn OFF
+- Consider current temperature when deciding
+- If unclear, choose safe comfortable defaults (25°C, MEDIUM fan)
 
-Be smart: understand intent, not just keywords. Consider current temperature and AC status.
+Fan Speed Selection:
+- QUIET: When user wants silence or it's night time
+- LOW: Small adjustments, energy saving
+- MEDIUM: Default, balanced
+- HIGH: Quick cooling, hot conditions
+- AUTO: When unsure
 """
 
-def authenticate():
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        return auth.split(" ")[1] == API_KEY
-    return request.args.get("api_key") == API_KEY
-
-def call_gemini(prompt, user_message):
-    """Gọi Gemini API"""
+def call_gemini(prompt, user_message, retry=True):
+    """Gọi Gemini API - CHỈ dùng cho voice commands"""
     try:
         payload = {
             "contents": [{
                 "parts": [{"text": f"{prompt}\n\n{user_message}"}]
             }],
             "generationConfig": {
-                "temperature": 0.3,
-                "topP": 0.8
-            }
+                "temperature": 0.4,
+                "topP": 0.9,
+                "topK": 40,
+                "maxOutputTokens": 512
+            },
+            "safetySettings": [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+            ]
         }
 
-        print(f"[INFO] Calling Gemini...")
+        print(f"[GEMINI] Calling API for voice command...")
+        print(f"[GEMINI] User message: {user_message[:150]}...")
         
         res = requests.post(
             f"{GEMINI_URL}?key={GEMINI_KEY}",
@@ -86,202 +94,119 @@ def call_gemini(prompt, user_message):
         )
         
         if res.status_code != 200:
-            print(f"[ERROR] HTTP {res.status_code}: {res.text[:300]}")
+            print(f"[GEMINI ERROR] HTTP {res.status_code}: {res.text[:300]}")
             return None
 
         resp = res.json()
         
         if "candidates" not in resp or len(resp["candidates"]) == 0:
-            print(f"[ERROR] No candidates")
+            print(f"[GEMINI ERROR] No candidates in response")
             return None
         
         candidate = resp["candidates"][0]
         finish = candidate.get("finishReason", "")
         
-        print(f"[DEBUG] Finish: {finish}")
-        
         if finish == "SAFETY":
-            print("[ERROR] Blocked by safety")
+            print("[GEMINI WARN] Response blocked by safety filters")
+            if retry:
+                print("[GEMINI] Retrying with modified prompt...")
+                return call_gemini(prompt, "Please provide a safe and helpful response. " + user_message, retry=False)
             return None
         
         if "content" not in candidate or "parts" not in candidate["content"]:
-            print(f"[ERROR] No content/parts")
+            print(f"[GEMINI ERROR] No content/parts in response")
             return None
         
         parts = candidate["content"]["parts"]
         if len(parts) == 0 or "text" not in parts[0]:
-            print(f"[ERROR] No text in parts")
+            print(f"[GEMINI ERROR] No text in parts")
             return None
         
         text = parts[0]["text"].strip()
-        print(f"[SUCCESS] Response: {text[:150]}...")
+        print(f"[GEMINI SUCCESS] Got response: {text[:200]}...")
         
         return text
 
     except requests.Timeout:
-        print("[ERROR] Timeout")
+        print("[GEMINI ERROR] Request timeout")
         return None
     except Exception as e:
-        print(f"[ERROR] {e}")
+        print(f"[GEMINI ERROR] Exception: {e}")
         return None
 
 def extract_json(text):
-    """Trích xuất JSON từ text response"""
+    """Trích xuất và parse JSON từ text response"""
     try:
-        # Tìm JSON
+        text = re.sub(r'```json\s*', '', text)
+        text = re.sub(r'```\s*', '', text)
+        text = text.strip()
+        
         start = text.find('{')
         end = text.rfind('}')
-        if start != -1 and end != -1:
-            json_str = text[start:end+1]
-            parsed = json.loads(json_str)
-            return parsed
+        
+        if start == -1 or end == -1:
+            print(f"[JSON ERROR] No braces found in: {text[:100]}")
+            return None
+        
+        json_str = text[start:end+1]
+        parsed = json.loads(json_str)
+        
+        if "action" not in parsed:
+            parsed["action"] = "maintain"
+        if "temperature" not in parsed:
+            parsed["temperature"] = 25
+        if "fan_speed" not in parsed:
+            parsed["fan_speed"] = "MEDIUM"
+        if "mode" not in parsed:
+            parsed["mode"] = "COOL"
+        if "reason" not in parsed:
+            parsed["reason"] = "Đã xử lý yêu cầu của bạn!"
+        
+        fan_str = str(parsed["fan_speed"]).upper()
+        if fan_str not in ["QUIET", "LOW", "MEDIUM", "HIGH", "AUTO"]:
+            parsed["fan_speed"] = "MEDIUM"
+        else:
+            parsed["fan_speed"] = fan_str
+        
+        mode_str = str(parsed["mode"]).upper()
+        if mode_str not in ["COOL", "DRY", "FAN", "HEAT", "AUTO"]:
+            parsed["mode"] = "COOL"
+        else:
+            parsed["mode"] = mode_str
+        
+        parsed["temperature"] = max(16, min(30, int(parsed["temperature"])))
+        
+        print(f"[JSON SUCCESS] Parsed - Action: {parsed['action']}, Temp: {parsed['temperature']}, Fan: {parsed['fan_speed']}")
+        return parsed
+        
+    except json.JSONDecodeError as e:
+        print(f"[JSON ERROR] Decode error: {e}")
         return None
-    except json.JSONDecodeError:
+    except Exception as e:
+        print(f"[JSON ERROR] Unexpected: {e}")
         return None
-
-@app.route("/")
-def index():
-    return jsonify({
-        "service": "AC Control AI Server",
-        "version": "2.0-Fixed",
-        "status": "ok",
-        "endpoints": {
-            "POST /llm/query": "Analyze environment",
-            "POST /llm/control": "Auto control",
-            "POST /voice/command": "Voice control"
-        }
-    })
-
-@app.route("/llm/query", methods=["POST"])
-def llm_query():
-    """Endpoint cũ - phân tích môi trường"""
-    if not authenticate():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        data = request.get_json(force=True)
-        
-        # Parse query từ 2 format
-        if "query" in data:
-            user_query = data["query"]
-        elif "contents" in data:
-            user_query = data["contents"][0]["parts"][0]["text"]
-        else:
-            return jsonify({"error": "Missing query"}), 400
-
-        print(f"[INFO] Environment Query: {user_query[:100]}...")
-        
-        # Call Gemini
-        text = call_gemini(SYSTEM_PROMPT, user_query)
-        
-        if not text:
-            return jsonify({"error": "Gemini API failed"}), 500
-        
-        # Parse JSON
-        parsed = extract_json(text)
-        if parsed:
-            print(f"[SUCCESS] Action: {parsed.get('action')}")
-            return jsonify(parsed), 200
-        else:
-            return jsonify({"raw_text": text}), 200
-
-    except Exception as e:
-        print(f"[ERROR] {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/llm/control", methods=["POST"])
-def llm_control():
-    """Alias cho llm/query"""
-    if not authenticate():
-        return jsonify({"error": "Unauthorized"}), 401
-    return llm_query()
-
-@app.route("/voice/command", methods=["POST"])
-def voice_command():
-    """Endpoint MỚI - xử lý lệnh giọng nói"""
-    if not authenticate():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        data = request.get_json(force=True)
-        
-        # Lấy text từ giọng nói
-        voice_text = data.get("text", "")
-        if not voice_text:
-            return jsonify({"error": "Missing text"}), 400
-        
-        # Lấy context môi trường (có giá trị mặc định hợp lý)
-        temperature = data.get("temperature", 27)  # Mặc định 27°C (hơi nóng)
-        humidity = data.get("humidity", 65)        # Mặc định 65% (bình thường)
-        ac_status = data.get("ac_status", False)   # Mặc định tắt
-        ac_temp = data.get("ac_temp", 25)          # Mặc định 25°C
-        
-        # Tạo context message
-        context = f"""
-Voice Command: "{voice_text}"
-
-Current Environment:
-- Temperature: {temperature}°C
-- Humidity: {humidity}%
-- AC Status: {'ON' if ac_status else 'OFF'}
-- AC Temperature: {ac_temp}°C
-
-Analyze the user's voice command and decide the appropriate action.
-If environment data is default/unknown, make reasonable assumptions based on the command.
-"""
-        
-        print(f"[INFO] Voice Command: {voice_text}")
-        print(f"[INFO] Context: T={temperature}°C (default), AC={'ON' if ac_status else 'OFF'}")
-        
-        # Call Gemini với voice prompt
-        text = call_gemini(VOICE_PROMPT, context)
-        
-        if not text:
-            return jsonify({"error": "Gemini API failed"}), 500
-        
-        # Parse JSON
-        parsed = extract_json(text)
-        if parsed:
-            print(f"[SUCCESS] Voice Action: {parsed.get('action')}")
-            print(f"[SUCCESS] Reason: {parsed.get('reason')}")
-            return jsonify(parsed), 200
-        else:
-            # Fallback: phân tích đơn giản bằng keywords
-            print("[WARN] No JSON, using fallback")
-            fallback = analyze_voice_fallback(voice_text, temperature, ac_status, ac_temp)
-            return jsonify(fallback), 200
-
-    except Exception as e:
-        print(f"[ERROR] {e}")
-        return jsonify({"error": str(e)}), 500
 
 def analyze_voice_fallback(text, temp, ac_on, ac_temp):
-    """Phân tích giọng nói đơn giản (fallback khi Gemini fail)"""
+    """Fallback logic khi Gemini fail"""
     text_lower = text.lower()
     
-    # Turn on - Luôn đặt nhiệt độ thoải mái
     if any(word in text_lower for word in ["turn on", "bật", "mở", "start", "power on"]):
-        # Quyết định nhiệt độ dựa vào temp hiện tại
-        target_temp = 24  # Mặc định thoải mái
-        fan = 2
+        target_temp = 24
+        fan = "MEDIUM"
         reason = ""
         
-        if temp > 30:  # Rất nóng
+        if temp > 30:
             target_temp = 22
-            fan = 3
-            reason = f"Phòng đang {temp}°C, rất nóng nên mình đã bật điều hòa ở {target_temp}°C để làm mát nhanh cho bạn nhé!"
-        elif temp > 28:  # Nóng
+            fan = "HIGH"
+            reason = f"Phòng đang {temp}°C, rất nóng nên mình đã bật điều hòa ở {target_temp}°C với quạt mạnh!"
+        elif temp > 28:
             target_temp = 24
-            fan = 2
-            reason = f"Trời đang hơi nóng ({temp}°C), mình đã bật điều hòa ở {target_temp}°C cho bạn!"
-        elif temp > 26:  # Hơi nóng
+            fan = "MEDIUM"
+            reason = f"Trời hơi nóng ({temp}°C), mình bật điều hòa ở {target_temp}°C cho bạn!"
+        else:
             target_temp = 25
-            fan = 2
-            reason = f"Mình đã bật điều hòa ở {target_temp}°C như bạn yêu cầu!"
-        else:  # Bình thường
-            target_temp = 26
-            fan = 1
-            reason = f"Dạ, mình đã bật điều hòa ở {target_temp}°C cho bạn!"
+            fan = "LOW"
+            reason = f"Mình đã bật điều hòa ở {target_temp}°C cho bạn!"
             
         return {
             "action": "turn_on",
@@ -291,163 +216,225 @@ def analyze_voice_fallback(text, temp, ac_on, ac_temp):
             "reason": reason
         }
     
-    # Turn off
     if any(word in text_lower for word in ["turn off", "tắt", "stop", "power off"]):
         return {
             "action": "turn_off",
             "temperature": ac_temp,
-            "fan_speed": 1,
+            "fan_speed": "MEDIUM",
             "mode": "COOL",
             "reason": "Dạ, mình đã tắt điều hòa theo yêu cầu của bạn!"
         }
     
-    # Cooler / colder - Giảm nhiệt
     if any(word in text_lower for word in ["cool", "cold", "mát", "lạnh", "giảm"]):
         if ac_on:
             new_temp = max(16, ac_temp - 2)
             return {
                 "action": "adjust",
                 "temperature": new_temp,
-                "fan_speed": 3,
+                "fan_speed": "HIGH",
                 "mode": "COOL",
-                "reason": f"Mình đã giảm nhiệt độ xuống 2°C từ {ac_temp}°C thành {new_temp}°C để mát hơn cho bạn nhé!"
+                "reason": f"Mình đã giảm nhiệt độ từ {ac_temp}°C xuống {new_temp}°C!"
             }
         else:
-            # Nếu chưa bật, bật với nhiệt độ thấp
             return {
                 "action": "turn_on",
                 "temperature": 22,
-                "fan_speed": 3,
+                "fan_speed": "HIGH",
                 "mode": "COOL",
-                "reason": "Bạn muốn mát nên mình đã bật điều hòa ở 22°C với quạt mạnh cho bạn!"
+                "reason": "Bạn muốn mát nên mình đã bật điều hòa ở 22°C với quạt mạnh!"
             }
     
-    # Warmer - Tăng nhiệt
-    if any(word in text_lower for word in ["warm", "ấm", "tăng", "increase"]):
-        if ac_on:
-            new_temp = min(30, ac_temp + 2)
-            return {
-                "action": "adjust",
-                "temperature": new_temp,
-                "fan_speed": 1,
-                "mode": "COOL",
-                "reason": f"Mình đã tăng nhiệt độ lên 2°C từ {ac_temp}°C thành {new_temp}°C để ấm hơn cho bạn!"
-            }
-        else:
-            return {
-                "action": "maintain",
-                "temperature": 27,
-                "fan_speed": 1,
-                "mode": "COOL",
-                "reason": "Phòng đang ấm rồi nên mình không cần bật điều hòa đâu bạn nhé!"
-            }
-    
-    # Hot complaint - Phàn nàn nóng
-    if any(word in text_lower for word in ["hot", "nóng", "heat"]):
-        if ac_on:
-            # Đã bật rồi → giảm thêm
-            new_temp = max(16, ac_temp - 3)
-            return {
-                "action": "adjust",
-                "temperature": new_temp,
-                "fan_speed": 3,
-                "mode": "COOL",
-                "reason": f"Bạn nói nóng quá nên mình đã giảm nhiệt độ xuống 3°C từ {ac_temp}°C thành {new_temp}°C và bật quạt mạnh cho bạn!"
-            }
-        else:
-            # Chưa bật → bật với nhiệt độ thấp
-            return {
-                "action": "turn_on",
-                "temperature": 22,
-                "fan_speed": 3,
-                "mode": "COOL",
-                "reason": "Bạn cảm thấy nóng nên mình đã bật điều hòa ở 22°C với quạt mạnh để làm mát nhanh cho bạn nhé!"
-            }
-    
-    # Dry mode
-    if any(word in text_lower for word in ["dry", "hút ẩm", "dehumid", "ẩm"]):
-        return {
-            "action": "adjust" if ac_on else "turn_on",
-            "temperature": 26,
-            "fan_speed": 2,
-            "mode": "DRY",
-            "reason": "Mình đã chuyển sang chế độ hút ẩm ở 26°C để giảm độ ẩm trong phòng cho bạn!"
-        }
-    
-    # Fan only
-    if any(word in text_lower for word in ["fan only", "quạt", "gió"]):
-        return {
-            "action": "adjust" if ac_on else "turn_on",
-            "temperature": ac_temp,
-            "fan_speed": 3,
-            "mode": "FAN",
-            "reason": "Dạ, mình đã chuyển sang chế độ quạt gió như bạn muốn!"
-        }
-    
-    # Số nhiệt độ cụ thể: "24 độ", "set to 24", "24 degrees"
-    temp_match = re.search(r'(\d+)\s*(degree|độ|°|度)?', text_lower)
-    if temp_match:
-        target_temp = int(temp_match.group(1))
-        if 16 <= target_temp <= 30:
-            if ac_on:
-                return {
-                    "action": "adjust",
-                    "temperature": target_temp,
-                    "fan_speed": 2,
-                    "mode": "COOL",
-                    "reason": f"Mình đã đặt nhiệt độ {target_temp}°C theo yêu cầu của bạn!"
-                }
-            else:
-                return {
-                    "action": "turn_on",
-                    "temperature": target_temp,
-                    "fan_speed": 2,
-                    "mode": "COOL",
-                    "reason": f"Mình đã bật điều hòa và đặt nhiệt độ {target_temp}°C cho bạn!"
-                }
-    
-    # Default - Nếu không hiểu lệnh
-    # Nếu AC đang tắt và không rõ ý → bật với nhiệt độ thoải mái
     if not ac_on:
         return {
             "action": "turn_on",
             "temperature": 24,
-            "fan_speed": 2,
+            "fan_speed": "MEDIUM",
             "mode": "COOL",
-            "reason": "Mình đã bật điều hòa ở 24°C - nhiệt độ thoải mái cho bạn!"
+            "reason": "Mình đã bật điều hòa ở 24°C - nhiệt độ thoải mái!"
         }
     else:
-        # AC đang bật → giữ nguyên
         return {
             "action": "maintain",
             "temperature": ac_temp,
-            "fan_speed": 2,
+            "fan_speed": "MEDIUM",
             "mode": "COOL",
-            "reason": f"Điều hòa đang hoạt động tốt ở {ac_temp}°C rồi, mình giữ nguyên nhé!"
+            "reason": f"Điều hòa đang hoạt động tốt ở {ac_temp}°C rồi!"
         }
+
+def generate_tts_audio(text):
+    """Tạo file audio từ text sử dụng gTTS"""
+    try:
+        # Tạo cache key từ text
+        cache_key = hashlib.md5(text.encode('utf-8')).hexdigest()
+        cache_file = os.path.join(TTS_CACHE_DIR, f"{cache_key}.mp3")
+        
+        # Kiểm tra cache
+        if os.path.exists(cache_file):
+            print(f"[TTS] Using cached audio: {cache_key}")
+            return cache_file
+        
+        # Tạo audio mới
+        print(f"[TTS] Generating audio for: {text}")
+        tts = gTTS(text=text, lang='vi', slow=False)
+        tts.save(cache_file)
+        print(f"[TTS] Audio saved: {cache_file}")
+        return cache_file
+        
+    except Exception as e:
+        print(f"[TTS ERROR] {e}")
+        return None
+
+def authenticate():
+    """Xác thực API key"""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth.split(" ")[1] == API_KEY
+    return request.args.get("api_key") == API_KEY
+
+# ============ API ENDPOINTS ============
+@app.route("/")
+def index():
+    """API info endpoint"""
+    return jsonify({
+        "service": "AC Voice Command Server with TTS",
+        "version": "6.0-TTS",
+        "status": "ok",
+        "model": "Gemini 2.0 Flash Experimental",
+        "tts": "Google gTTS",
+        "endpoints": {
+            "POST /voice/command": "Process voice commands with Gemini AI + TTS",
+            "POST /tts/speak": "Generate TTS audio from text"
+        }
+    })
+
+@app.route("/voice/command", methods=["POST"])
+def voice_command():
+    """Endpoint xử lý lệnh giọng nói VÀ TRẢ VỀ AUDIO"""
+    if not authenticate():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        data = request.get_json(force=True)
+        print(f"\n[VOICE] ========== New Voice Command ==========")
+        
+        voice_text = data.get("text", "")
+        if not voice_text:
+            return jsonify({"error": "Missing text field"}), 400
+        
+        print(f"[VOICE] User said: '{voice_text}'")
+        
+        temperature = data.get("temperature", 27)
+        humidity = data.get("humidity", 65)
+        ac_status = data.get("ac_status", False)
+        ac_temp = data.get("ac_temp", 25)
+        ac_mode = data.get("ac_mode", "COOL")
+        ac_fan = data.get("ac_fan", "MEDIUM")
+        
+        context = f"""
+User Voice Command: "{voice_text}"
+
+Current Environment:
+- Room Temperature: {temperature}°C
+- Humidity: {humidity}%
+- AC Status: {'ON' if ac_status else 'OFF'}
+{f"- AC Settings: {ac_temp}°C, {ac_mode} mode, {ac_fan} fan" if ac_status else ""}
+
+Analyze the user's command and provide appropriate AC control action.
+"""
+        
+        text = call_gemini(VOICE_PROMPT, context)
+        
+        if not text:
+            print("[VOICE] Gemini API failed, using fallback logic")
+            fallback = analyze_voice_fallback(voice_text, temperature, ac_status, ac_temp)
+            
+            # Tạo audio từ fallback reason
+            audio_file = generate_tts_audio(fallback['reason'])
+            if audio_file:
+                fallback['audio_url'] = f"/tts/audio/{os.path.basename(audio_file)}"
+            
+            return jsonify(fallback), 200
+        
+        parsed = extract_json(text)
+        
+        if parsed:
+            print(f"[VOICE SUCCESS] ✓ Reason: {parsed['reason']}")
+            
+            # Tạo audio từ reason
+            audio_file = generate_tts_audio(parsed['reason'])
+            if audio_file:
+                parsed['audio_url'] = f"/tts/audio/{os.path.basename(audio_file)}"
+            
+            return jsonify(parsed), 200
+        else:
+            fallback = analyze_voice_fallback(voice_text, temperature, ac_status, ac_temp)
+            audio_file = generate_tts_audio(fallback['reason'])
+            if audio_file:
+                fallback['audio_url'] = f"/tts/audio/{os.path.basename(audio_file)}"
+            return jsonify(fallback), 200
+
+    except Exception as e:
+        print(f"[VOICE ERROR] Exception: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/tts/speak", methods=["POST"])
+def tts_speak():
+    """Endpoint tạo audio từ text"""
+    if not authenticate():
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    try:
+        data = request.get_json(force=True)
+        text = data.get("text", "")
+        
+        if not text:
+            return jsonify({"error": "Missing text field"}), 400
+        
+        audio_file = generate_tts_audio(text)
+        if not audio_file:
+            return jsonify({"error": "Failed to generate audio"}), 500
+        
+        return jsonify({
+            "success": True,
+            "audio_url": f"/tts/audio/{os.path.basename(audio_file)}"
+        })
+        
+    except Exception as e:
+        print(f"[TTS ERROR] {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/tts/audio/<filename>")
+def serve_audio(filename):
+    """Phục vụ file audio"""
+    try:
+        file_path = os.path.join(TTS_CACHE_DIR, filename)
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found"}), 404
+        return send_file(file_path, mimetype='audio/mpeg')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.after_request
 def after_request(response):
+    """Add CORS headers"""
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("🚀 AC Control AI Server v2.0-Fixed")
-    print("=" * 50)
+    print("=" * 70)
+    print("🎤 AC Voice Command Server v6.0 - WITH TTS")
+    print("=" * 70)
     print("📡 Server: http://0.0.0.0:5000")
+    print("🤖 AI Model: Gemini 2.0 Flash Experimental")
+    print("🔊 TTS Engine: Google gTTS (Vietnamese)")
     print("\n📋 Endpoints:")
-    print("  POST /llm/query      - Environment analysis")
-    print("  POST /llm/control    - Auto control")
-    print("  POST /voice/command  - Voice control (NEW!)")
-    print("\n🎤 Voice Command Examples:")
-    print("  - Turn on the AC")
-    print("  - Bật điều hòa")
-    print("  - Make it cooler")
-    print("  - Set temperature to 24")
-    print("  - It's too hot")
-    print("  - Switch to dry mode")
-    print("=" * 50)
+    print("  POST /voice/command  - Voice commands + Auto TTS")
+    print("  POST /tts/speak      - Generate TTS audio")
+    print("  GET  /tts/audio/<id> - Serve audio files")
+    print("\n✨ NEW: Auto text-to-speech for all responses!")
+    print("=" * 70)
     app.run(host="0.0.0.0", port=5000, debug=True)

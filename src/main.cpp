@@ -5,6 +5,7 @@
 #include <IRremoteESP8266.h>
 #include <IRrecv.h>
 #include <IRsend.h>
+#include <ir_Daikin.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <LiquidCrystal_I2C.h>
@@ -20,28 +21,16 @@
 #define RADAR_TRIG_PIN 23
 #define RADAR_ECHO_PIN 26
 #define LDR_PIN 34
-#define LED_STATUS 2
-#define LED_WIFI 15
-#define LED_ERROR 13
-#define LED_AI 14            // Đổi tên từ LED_LLM thành LED_AI
-#define BTN_POWER 19         // Đổi tên từ BTN_MANUAL thành BTN_POWER
-#define BTN_AI 27            // Đổi tên từ BTN_LLM thành BTN_AI
-#define BTN_TEST_PRESENCE 33 // NÚT MỚI - Test presence cho Wokwi
+#define BTN_POWER 19
+#define BTN_AI 27
+#define BTN_TEST_PRESENCE 33
 #define BUZZER_PIN 12
-
-// ============ MÃ IR REMOTE AC ============
-#define IR_AC_POWER 0xff45ba
-#define IR_AC_TEMP_UP 0xff40bf
-#define IR_AC_TEMP_DOWN 0xff19e6
-#define IR_AC_MODE 0xff07f8
-#define IR_AC_FAN 0xff09f6
 
 // ============ CẤU HÌNH WIFI ============
 #define WIFI_SSID "Wokwi-GUEST"
 #define WIFI_PASSWORD ""
 
-// ============ CẤU HÌNH LLM API ============
-#define LLM_API_URL "http://172.16.0.2:5000/llm/query"
+// ============ CẤU HÌNH API ============
 #define VOICE_API_URL "http://172.16.0.2:5000/voice/command"
 #define API_KEY "AC_SECRET_KEY_2024_LLM_V5"
 
@@ -49,13 +38,23 @@
 #define DHT_TYPE DHT22
 DHT dht(DHT_PIN, DHT_TYPE);
 IRrecv irrecv(IR_RECV_PIN);
-IRsend irsend(IR_SEND_PIN);
+IRDaikinESP irsend(IR_SEND_PIN);
 decode_results results;
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 RTC_DS1307 rtc;
 AsyncWebServer server(80);
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", 7 * 3600);
+
+// ============ ENUM CHO TỐC ĐỘ QUẠT ============
+enum FanSpeed
+{
+  FAN_QUIET = 1,
+  FAN_LOW = 2,
+  FAN_MEDIUM = 3,
+  FAN_HIGH = 4,
+  FAN_AUTO = 5
+};
 
 // ============ BIẾN CẢM BIẾN ============
 float temperature = 0;
@@ -67,34 +66,31 @@ float presenceDistance = 0;
 unsigned long lastMotionTime = 0;
 unsigned long lastPresenceTime = 0;
 DateTime now;
+bool testPresenceMode = false;
 
-// BIẾN TEST MODE CHO WOKWI
-bool testPresenceMode = false; // Chế độ giả lập có người
-
-// ============ BIẾN ĐIỀU KHIỂN AC ============
+// ============ BIẾN ĐIỀU KHIỂN AC DAIKIN ============
 bool acStatus = false;
 int acTemp = 25;
 String acMode = "COOL";
-int acFan = 2;
+FanSpeed acFan = FAN_MEDIUM;
 
-// ============ BIẾN LLM ============
-bool llmEnabled = true;
-bool llmProcessing = false;
-String lastLLMResponse = "";
-unsigned long lastLLMRequest = 0;
+// ============ BIẾN AI ============
+bool aiEnabled = true;
+bool aiProcessing = false;
+String lastAIResponse = "";
+unsigned long lastAIOptimization = 0;
+const unsigned long AI_COOLDOWN = 5000; // ✅ GIẢM XUỐNG 5 GIÂY
 
-// ============ IR HUB ============
-struct LearnedIRCommand
+// ============ LCD DISPLAY MODES ============
+enum DisplayMode
 {
-  String name;
-  uint64_t code;
-  int type;
+  DISP_BASIC,     // T:25.5C H:60%
+  DISP_AC_STATUS, // AC:24C COOL MED
+  DISP_PRESENCE,  // Presence: 50cm
+  DISP_AI_STATUS  // AI: Optimizing...
 };
-
-#define MAX_IR_COMMANDS 10
-LearnedIRCommand learnedCommands[MAX_IR_COMMANDS];
-int learnedCount = 0;
-bool irLearningMode = false;
+DisplayMode currentDisplayMode = DISP_BASIC;
+unsigned long lastDisplayChange = 0;
 
 // ============ LOG SYSTEM ============
 struct LogEntry
@@ -120,17 +116,68 @@ void addLog(String level, String message)
 
 // ============ THỐNG KÊ ============
 unsigned long totalRequests = 0;
-unsigned long llmRequests = 0;
+unsigned long voiceCommands = 0;
 unsigned long irCommands = 0;
 unsigned long autoOptimizations = 0;
-unsigned long voiceCommands = 0;
 unsigned long lastSensorRead = 0;
 const long sensorInterval = 2000;
 
 // ============ KHAI BÁO PROTOTYPE ============
 void updateLCD();
-void processLLMDecision(String llmResponse);
-void sendACCommand(uint32_t code, String commandName);
+void sendDaikinCommand(String commandName);
+String callVoiceAPI(String voiceText);
+void processAIDecision(String aiResponse);
+void mockLLMOptimize();
+
+// ============ HÀM CHUYỂN ĐỔI FAN SPEED ============
+String fanSpeedToString(FanSpeed speed)
+{
+  switch (speed)
+  {
+  case FAN_QUIET:
+    return "QUIET";
+  case FAN_LOW:
+    return "LOW";
+  case FAN_MEDIUM:
+    return "MED";
+  case FAN_HIGH:
+    return "HIGH";
+  case FAN_AUTO:
+    return "AUTO";
+  default:
+    return "MED";
+  }
+}
+
+FanSpeed stringToFanSpeed(String speedStr)
+{
+  speedStr.toUpperCase();
+  if (speedStr == "QUIET" || speedStr == "1")
+    return FAN_QUIET;
+  if (speedStr == "LOW" || speedStr == "2")
+    return FAN_LOW;
+  if (speedStr == "MEDIUM" || speedStr == "MED" || speedStr == "3")
+    return FAN_MEDIUM;
+  if (speedStr == "HIGH" || speedStr == "4")
+    return FAN_HIGH;
+  if (speedStr == "AUTO" || speedStr == "5")
+    return FAN_AUTO;
+  return FAN_MEDIUM;
+}
+
+int fanSpeedToInt(FanSpeed speed)
+{
+  return static_cast<int>(speed);
+}
+
+FanSpeed intToFanSpeed(int speed)
+{
+  if (speed < 1)
+    speed = 1;
+  if (speed > 5)
+    speed = 5;
+  return static_cast<FanSpeed>(speed);
+}
 
 // ============ HÀM TIỆN ÍCH ============
 void beep(int duration = 100, int times = 1)
@@ -145,21 +192,10 @@ void beep(int duration = 100, int times = 1)
   }
 }
 
-void blinkLED(int pin, int times = 1)
-{
-  for (int i = 0; i < times; i++)
-  {
-    digitalWrite(pin, HIGH);
-    delay(100);
-    digitalWrite(pin, LOW);
-    delay(100);
-  }
-}
-
 void reportError(String errorMsg, int blinkCount = 3)
 {
   addLog("ERROR", errorMsg);
-  blinkLED(LED_ERROR, blinkCount);
+  beep(200, blinkCount);
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("ERROR!");
@@ -169,7 +205,7 @@ void reportError(String errorMsg, int blinkCount = 3)
   updateLCD();
 }
 
-// ============ ĐỌC CẢM BIẾN ============
+// ============ ĐỌC CẢM BIẾN (✅ SỬA) ============
 void readSensors()
 {
   float h = dht.readHumidity();
@@ -185,18 +221,20 @@ void readSensors()
   humidity = h;
   lightLevel = analogRead(LDR_PIN);
 
-  // NẾU ĐANG Ở CHẾ ĐỘ TEST, BỎ QUA ĐỌC CẢM BIẾN THẬT
+  // ✅ XỬ LÝ TEST PRESENCE MODE - VẪN CẬP NHẬT PRESENCE
   if (testPresenceMode)
   {
-    // Giữ nguyên giá trị đã set bởi nút test
+    presenceDetected = true; // ✅ BẮT BUỘC TRUE KHI TEST
+    motionDetected = true;
+    presenceDistance = 50.0;
+    lastPresenceTime = millis();
+    lastMotionTime = millis();
     now = rtc.now();
-    addLog("INFO", "T=" + String(temperature, 1) + "C H=" + String(humidity, 0) +
-                       "% TEST_MODE:ON");
-    return;
+    addLog("INFO", "T=" + String(temperature, 1) + "C H=" + String(humidity, 0) + "% TEST_MODE:ON PRESENCE:FORCED");
+    return; // Không đọc cảm biến thật
   }
 
-  // ĐỌC CẢM BIẾN BÌNH THƯỜNG KHI KHÔNG Ở CHẾ ĐỘ TEST
-  // Đọc PIR
+  // ✅ ĐỌC CẢM BIẾN THẬT KHI KHÔNG TEST
   if (digitalRead(PIR_PIN) == HIGH)
   {
     motionDetected = true;
@@ -207,7 +245,6 @@ void readSensors()
     motionDetected = false;
   }
 
-  // Đọc RADAR (HC-SR04)
   digitalWrite(RADAR_TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(RADAR_TRIG_PIN, HIGH);
@@ -229,219 +266,414 @@ void readSensors()
 
   now = rtc.now();
   addLog("INFO", "T=" + String(temperature, 1) + "C H=" + String(humidity, 0) +
-                     "% Dist=" + String(presenceDistance, 0) + "cm");
+                     "% Motion:" + String(motionDetected) + " Presence:" + String(presenceDetected) +
+                     " Dist=" + String(presenceDistance, 0) + "cm");
 }
 
-// ============ CẬP NHẬT LCD - THÊM HIỂN THỊ MỨC QUẠT ============
+// ============ CẬP NHẬT LCD (✅ SỬA - HIỂN THỊ LUÂN PHIÊN) ============
 void updateLCD()
 {
   lcd.clear();
 
-  // DÒNG 1: Nhiệt độ + Độ ẩm + Presence indicator
+  // ✅ DÒNG 1: Luôn hiển thị nhiệt độ + độ ẩm
   lcd.setCursor(0, 0);
   lcd.print("T:");
   lcd.print(temperature, 1);
-  lcd.print("C H:");
-  lcd.print(humidity, 0);
+  lcd.print("C ");
+  lcd.print("H:");
+  lcd.print((int)humidity);
   lcd.print("%");
 
+  // ✅ Hiển thị chỉ báo presence/test ở góc phải
   if (presenceDetected)
   {
-    lcd.setCursor(15, 0);
-    lcd.write(testPresenceMode ? 'T' : 0xFF);
+    lcd.setCursor(14, 0);
+    lcd.print(testPresenceMode ? "T" : "P");
   }
 
-  // DÒNG 2: Trạng thái AC
+  if (aiEnabled)
+  {
+    lcd.setCursor(15, 0);
+    lcd.print("*");
+  }
+
+  // ✅ DÒNG 2: Luân phiên hiển thị thông tin
   lcd.setCursor(0, 1);
+
   if (acStatus)
   {
-    // Khi AC BẬT: hiển thị "AC:24C C F2" hoặc "AC:26C D F3 AI"
+    // ✅ KHI AC BẬT: Hiển thị nhiệt độ + mode + fan speed CHUẨN
+    // Format: "AC:24C C QUI" hoặc "AC:24C C HI" (16 ký tự)
     lcd.print("AC:");
     lcd.print(acTemp);
     lcd.print("C ");
 
-    // Hiển thị chế độ (1 ký tự): C=COOL, D=DRY, F=FAN
+    // Mode: 1 ký tự
     lcd.print(acMode.substring(0, 1));
+    lcd.print(" ");
 
-    // Hiển thị mức quạt: F1, F2, F3
-    lcd.print(" F");
-    lcd.print(acFan);
-
-    // Hiển thị AI ở cuối nếu còn chỗ
-    if (llmEnabled)
+    // ✅ FAN SPEED: Hiển thị tên rút gọn chuẩn
+    String fanDisplay = "";
+    switch (acFan)
     {
-      lcd.setCursor(13, 1);
-      lcd.print("AI");
+    case FAN_QUIET:
+      fanDisplay = "QUI"; // QUIET
+      break;
+    case FAN_LOW:
+      fanDisplay = "LOW";
+      break;
+    case FAN_MEDIUM:
+      fanDisplay = "MED";
+      break;
+    case FAN_HIGH:
+      fanDisplay = "HI ";
+      break;
+    case FAN_AUTO:
+      fanDisplay = "AUT"; // AUTO
+      break;
+    default:
+      fanDisplay = "MED";
     }
+    lcd.print(fanDisplay);
   }
   else
   {
-    // Khi AC TẮT: hiển thị thời gian + trạng thái presence
-    lcd.printf("%02d:%02d ", now.hour(), now.minute());
-    lcd.print(presenceDetected ? "Presence" : "Empty   ");
+    // Khi AC tắt: luân phiên thông tin
+    unsigned long now_ms = millis();
+    int cycle = (now_ms / 3000) % 3; // Đổi mỗi 3 giây
+
+    switch (cycle)
+    {
+    case 0: // Giờ + presence
+      lcd.printf("%02d:%02d", now.hour(), now.minute());
+      lcd.print(presenceDetected ? " PRESENT" : " EMPTY  ");
+      break;
+
+    case 1: // Khoảng cách
+      if (presenceDetected)
+      {
+        lcd.print("Dist: ");
+        lcd.print((int)presenceDistance);
+        lcd.print("cm   ");
+      }
+      else
+      {
+        lcd.print("No presence    ");
+      }
+      break;
+
+    case 2: // Ánh sáng
+      lcd.print("Light: ");
+      lcd.print(lightLevel);
+      lcd.print("   ");
+      break;
+    }
   }
 }
 
-// ============ GỬI LỆNH AC ============
-void sendACCommand(uint32_t code, String commandName)
+// ============ GỬI LỆNH DAIKIN ============
+void sendDaikinCommand(String commandName)
 {
-  irsend.sendNEC(code, 32);
-  irCommands++;
-  addLog("INFO", "IR SEND: " + commandName + " (0x" + String(code, HEX) + ")");
+  if (!acStatus)
+  {
+    irsend.off();
+  }
+  else
+  {
+    irsend.on();
+    irsend.setTemp(acTemp);
 
-  digitalWrite(LED_STATUS, acStatus);
+    if (acMode == "COOL")
+      irsend.setMode(kDaikinCool);
+    else if (acMode == "HEAT")
+      irsend.setMode(kDaikinHeat);
+    else if (acMode == "DRY")
+      irsend.setMode(kDaikinDry);
+    else if (acMode == "FAN")
+      irsend.setMode(kDaikinFan);
+    else if (acMode == "AUTO")
+      irsend.setMode(kDaikinAuto);
+
+    switch (acFan)
+    {
+    case FAN_QUIET:
+      irsend.setFan(kDaikinFanQuiet);
+      break;
+    case FAN_LOW:
+      irsend.setFan(kDaikinFanMin);
+      break;
+    case FAN_MEDIUM:
+      irsend.setFan(kDaikinFanMed);
+      break;
+    case FAN_HIGH:
+      irsend.setFan(kDaikinFanMax);
+      break;
+    case FAN_AUTO:
+      irsend.setFan(kDaikinFanAuto);
+      break;
+    }
+  }
+
+  irsend.send();
+  irCommands++;
+
+  addLog("INFO", "DAIKIN→ " + commandName + " | PWR:" + String(acStatus ? "ON" : "OFF") +
+                     " T:" + String(acTemp) + "C M:" + acMode + " F:" + fanSpeedToString(acFan));
+
   beep(acStatus ? 100 : 50, acStatus ? 1 : 2);
   updateLCD();
 }
 
-// ============ IR LEARNING MODE ============
-void startIRLearning()
+// ============ MOCK LLM - TỰ ĐỘNG TỐI ƯU (✅ SỬA) ============
+void mockLLMOptimize()
 {
-  irLearningMode = true;
-  addLog("INFO", "IR Learning started");
-  lcd.clear();
-  lcd.print("IR Learn Mode");
-  lcd.setCursor(0, 1);
-  lcd.print("Press remote...");
-  beep(100, 3);
-}
+  static unsigned long lastCheck = 0;
+  static float lastTemp = 0;
+  static bool lastPresence = false;
 
-void captureIRCommand()
-{
-  if (!irLearningMode)
+  // Kiểm tra cooldown
+  if (millis() - lastCheck < AI_COOLDOWN)
     return;
 
-  if (irrecv.decode(&results))
+  // Kiểm tra AI có được bật không
+  if (!aiEnabled)
   {
-    if (results.value != 0xFFFFFFFF && learnedCount < MAX_IR_COMMANDS)
-    {
-      learnedCommands[learnedCount].code = results.value;
-      learnedCommands[learnedCount].type = results.decode_type;
-      learnedCommands[learnedCount].name = "CMD_" + String(learnedCount);
-
-      addLog("SUCCESS", "Learned IR: 0x" + String(results.value, HEX));
-
-      lcd.clear();
-      lcd.print("Learned #");
-      lcd.print(learnedCount + 1);
-      lcd.setCursor(0, 1);
-      lcd.print("0x");
-      lcd.print(String(results.value, HEX).substring(0, 12));
-
-      learnedCount++;
-      beep(200, 1);
-
-      if (learnedCount >= MAX_IR_COMMANDS)
-      {
-        irLearningMode = false;
-        addLog("INFO", "IR Learning complete");
-        beep(100, 3);
-      }
-    }
-    irrecv.resume();
+    lastCheck = millis();
+    return;
   }
-}
 
-// ============ MOCK LLM - LOCAL AI ============
-String mockLLM(String userMessage)
-{
-  addLog("INFO", "Mock LLM - Local AI Analysis");
+  if (aiProcessing)
+    return;
 
+  // ✅ BỎ KIỂM TRA TEST MODE - CHO AI CHẠY LUÔN
+  // Test mode CHỈ giả lập cảm biến, không chặn AI
+
+  bool trigger = false;
+  String triggerReason = "";
   String action = "maintain";
-  int targetTemp = 25;
+  int targetTemp = acTemp;
+  FanSpeed targetFan = acFan;
+  String targetMode = acMode;
   String reason = "";
-  int fanSpeed = 2;
-  String mode = "COOL";
 
-  // Logic thông minh dựa trên cảm biến
-  if (temperature > 28 && !acStatus && presenceDetected)
+  addLog("AI", "[MOCK LLM] Analyzing... T=" + String(temperature, 1) + "C Presence:" + String(presenceDetected));
+
+  // ===== RULE 1: Không có người - Tắt AC =====
+  if (!presenceDetected && !motionDetected && acStatus)
   {
-    action = "turn_on";
-    targetTemp = 24;
-    fanSpeed = 3;
-    reason = "Hot + person present";
-  }
-  else if (temperature < 23 && acStatus)
-  {
-    action = "turn_off";
-    reason = "Cool enough";
-  }
-  else if (!presenceDetected && !motionDetected && acStatus)
-  {
-    if (millis() - lastPresenceTime > 300000) // 5 phút
+    if (millis() - lastPresenceTime > 60000) // ✅ GIẢM XUỐNG 1 PHÚT
     {
+      trigger = true;
       action = "turn_off";
-      reason = "No presence detected";
+      reason = "No presence 1min";
+      addLog("AI", "✓ Rule 1: No presence → Turn OFF");
     }
   }
-  else if (humidity > 70 && temperature > 26)
+
+  // ===== RULE 2: Quá nóng + Có người - Bật AC =====
+  if (!trigger && temperature >= 29 && (presenceDetected || motionDetected) && !acStatus)
   {
+    trigger = true;
     action = "turn_on";
-    mode = "DRY";
-    targetTemp = 26;
-    reason = "High humidity";
+    targetTemp = (temperature >= 31) ? 22 : 24;
+    targetFan = (temperature >= 31) ? FAN_HIGH : FAN_MEDIUM;
+    targetMode = "COOL";
+    reason = "Very hot (" + String(temperature, 1) + "C)";
+    addLog("AI", "✓ Rule 2: Too hot → Turn ON at " + String(targetTemp) + "C");
   }
-  else if (lightLevel > 3000 && now.hour() >= 22)
+
+  // ===== RULE 3: Hơi nóng + Có người - Bật AC =====
+  if (!trigger && temperature >= 27 && (presenceDetected || motionDetected) && !acStatus)
   {
-    if (acStatus && acTemp < 26)
+    trigger = true;
+    action = "turn_on";
+    targetTemp = 25;
+    targetFan = FAN_MEDIUM;
+    targetMode = "COOL";
+    reason = "Hot (" + String(temperature, 1) + "C)";
+    addLog("AI", "✓ Rule 3: Hot → Turn ON");
+  }
+
+  // ===== RULE 4: Quá lạnh - Tắt AC =====
+  if (!trigger && temperature <= 22 && acStatus)
+  {
+    trigger = true;
+    action = "turn_off";
+    reason = "Too cold (" + String(temperature, 1) + "C)";
+    addLog("AI", "✓ Rule 4: Too cold → Turn OFF");
+  }
+
+  // ===== RULE 5: Độ ẩm cao - Dùng DRY mode =====
+  if (!trigger && humidity >= 75 && temperature >= 24 && temperature <= 28 && acStatus)
+  {
+    if (acMode != "DRY")
     {
+      trigger = true;
       action = "adjust";
       targetTemp = 26;
-      fanSpeed = 1;
-      reason = "Night mode - save energy";
+      targetFan = FAN_MEDIUM;
+      targetMode = "DRY";
+      reason = "High humidity (" + String(humidity, 0) + "%)";
+      addLog("AI", "✓ Rule 5: High humidity → DRY mode");
     }
   }
-  else if (acStatus && abs(temperature - acTemp) > 2)
+
+  // ===== RULE 6: Điều chỉnh nhiệt độ khi AC đang bật =====
+  if (!trigger && acStatus && (presenceDetected || motionDetected))
   {
-    action = "adjust";
-    if (temperature > acTemp + 2)
+    // Quá nóng so với setting
+    if (temperature > acTemp + 3)
     {
-      targetTemp = acTemp - 1;
-      fanSpeed = 3;
-      reason = "Not cool enough";
+      trigger = true;
+      action = "adjust";
+      targetTemp = max(16, acTemp - 2);
+      targetFan = FAN_HIGH;
+      targetMode = acMode;
+      reason = "Still warm, lowering";
+      addLog("AI", "✓ Rule 6a: Too hot vs setting → Lower to " + String(targetTemp) + "C");
     }
-    else
+    // Gần đạt nhiệt độ mục tiêu
+    else if (abs(temperature - acTemp) <= 1 && acFan != FAN_LOW)
     {
-      targetTemp = acTemp + 1;
-      fanSpeed = 1;
-      reason = "Too cold";
+      trigger = true;
+      action = "adjust";
+      targetTemp = acTemp;
+      targetFan = FAN_LOW;
+      targetMode = acMode;
+      reason = "Near target, reduce";
+      addLog("AI", "✓ Rule 6b: Near target → Reduce fan");
     }
   }
 
-  DynamicJsonDocument doc(512);
-  doc["action"] = action;
-  doc["temperature"] = targetTemp;
-  doc["fan_speed"] = fanSpeed;
-  doc["mode"] = mode;
-  doc["reason"] = reason.length() > 0 ? reason : "Maintain comfort";
+  // ===== RULE 7: Ban đêm → Chế độ QUIET =====
+  if (!trigger && acStatus && (presenceDetected || motionDetected))
+  {
+    if ((now.hour() >= 22 || now.hour() <= 6) && acFan != FAN_QUIET && lightLevel < 500)
+    {
+      trigger = true;
+      action = "adjust";
+      targetTemp = acTemp;
+      targetFan = FAN_QUIET;
+      targetMode = acMode;
+      reason = "Night mode";
+      addLog("AI", "✓ Rule 7: Night → QUIET mode");
+    }
+  }
 
-  String response;
-  serializeJson(doc, response);
-  addLog("SUCCESS", "Local AI: " + action + " - " + reason);
+  // ===== Thực hiện action =====
+  if (trigger)
+  {
+    addLog("AI", "⚡ MOCK LLM → " + action + ": " + reason);
+
+    if (action == "turn_off")
+    {
+      acStatus = false;
+      sendDaikinCommand("AI_OFF");
+      lastAIResponse = reason;
+      autoOptimizations++;
+    }
+    else if (action == "turn_on")
+    {
+      acStatus = true;
+      acTemp = targetTemp;
+      acFan = targetFan;
+      acMode = targetMode;
+      sendDaikinCommand("AI_ON");
+      lastAIResponse = reason;
+      autoOptimizations++;
+    }
+    else if (action == "adjust")
+    {
+      acTemp = targetTemp;
+      acFan = targetFan;
+      acMode = targetMode;
+      sendDaikinCommand("AI_ADJUST");
+      lastAIResponse = reason;
+      autoOptimizations++;
+    }
+
+    lastTemp = temperature;
+    lastPresence = presenceDetected;
+  }
+  else
+  {
+    addLog("AI", "⏸ MOCK LLM: Maintain - All OK");
+  }
+
+  lastCheck = millis();
+}
+
+// ============ GỌI VOICE API (GEMINI THẬT) ============
+String callVoiceAPI(String voiceText)
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    addLog("ERROR", "WiFi not connected");
+    return "";
+  }
+
+  HTTPClient http;
+  http.begin(VOICE_API_URL);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Authorization", "Bearer " + String(API_KEY));
+  http.setTimeout(15000);
+
+  DynamicJsonDocument doc(1024);
+  doc["text"] = voiceText;
+  doc["temperature"] = temperature;
+  doc["humidity"] = humidity;
+  doc["ac_status"] = acStatus;
+  doc["ac_temp"] = acTemp;
+  doc["ac_mode"] = acMode;
+  doc["ac_fan"] = fanSpeedToString(acFan);
+
+  String payload;
+  serializeJson(doc, payload);
+
+  addLog("INFO", "→ VOICE API: " + voiceText);
+
+  aiProcessing = true;
+  int httpCode = http.POST(payload);
+  aiProcessing = false;
+  voiceCommands++;
+
+  String response = "";
+
+  if (httpCode > 0)
+  {
+    response = http.getString();
+    addLog("SUCCESS", "← VOICE HTTP " + String(httpCode));
+  }
+  else
+  {
+    addLog("ERROR", "VOICE failed: " + String(httpCode));
+  }
+
+  http.end();
   return response;
 }
 
-// ============ XỬ LÝ QUYẾT ĐỊNH LLM ============
-void processLLMDecision(String llmResponse)
+// ============ XỬ LÝ QUYẾT ĐỊNH AI ============
+void processAIDecision(String aiResponse)
 {
   addLog("INFO", "Process AI Decision...");
 
-  if (llmResponse.indexOf("\"error\"") != -1)
+  if (aiResponse.length() == 0 || aiResponse.indexOf("\"error\"") != -1)
   {
-    addLog("ERROR", "AI returned error");
+    addLog("ERROR", "Invalid AI response");
     return;
   }
 
-  int jsonStart = llmResponse.indexOf('{');
-  int jsonEnd = llmResponse.lastIndexOf('}');
+  int jsonStart = aiResponse.indexOf('{');
+  int jsonEnd = aiResponse.lastIndexOf('}');
   if (jsonStart == -1 || jsonEnd == -1)
   {
     addLog("ERROR", "No JSON in response");
     return;
   }
 
-  String jsonStr = llmResponse.substring(jsonStart, jsonEnd + 1);
-  DynamicJsonDocument doc(512);
+  String jsonStr = aiResponse.substring(jsonStart, jsonEnd + 1);
+  DynamicJsonDocument doc(768);
   DeserializationError error = deserializeJson(doc, jsonStr);
 
   if (error)
@@ -457,130 +689,61 @@ void processLLMDecision(String llmResponse)
   {
     acStatus = true;
     acTemp = constrain(doc["temperature"] | 25, 16, 30);
-    acFan = constrain(doc["fan_speed"] | 2, 1, 3);
+
+    if (doc.containsKey("fan_speed"))
+    {
+      if (doc["fan_speed"].is<String>())
+      {
+        acFan = stringToFanSpeed(doc["fan_speed"].as<String>());
+      }
+      else
+      {
+        int fanInt = doc["fan_speed"] | 3;
+        acFan = intToFanSpeed(fanInt);
+      }
+    }
+
     acMode = doc["mode"] | "COOL";
-    sendACCommand(IR_AC_POWER, "AI_ON");
-    addLog("SUCCESS", "AC ON " + String(acTemp) + "C");
-    autoOptimizations++;
+    sendDaikinCommand("VOICE_ON");
+    addLog("SUCCESS", "AC ON " + String(acTemp) + "C " + fanSpeedToString(acFan));
   }
   else if (action == "turn_off")
   {
     acStatus = false;
-    sendACCommand(IR_AC_POWER, "AI_OFF");
+    sendDaikinCommand("VOICE_OFF");
     addLog("SUCCESS", "AC OFF");
-    autoOptimizations++;
   }
   else if (action == "adjust")
   {
     if (acStatus)
     {
-      int newTemp = constrain(doc["temperature"] | acTemp, 16, 30);
-      acFan = constrain(doc["fan_speed"] | acFan, 1, 3);
+      acTemp = constrain(doc["temperature"] | acTemp, 16, 30);
+
+      if (doc.containsKey("fan_speed"))
+      {
+        if (doc["fan_speed"].is<String>())
+        {
+          acFan = stringToFanSpeed(doc["fan_speed"].as<String>());
+        }
+        else
+        {
+          int fanInt = doc["fan_speed"] | fanSpeedToInt(acFan);
+          acFan = intToFanSpeed(fanInt);
+        }
+      }
+
       acMode = doc["mode"] | acMode;
-
-      if (newTemp > acTemp)
-        sendACCommand(IR_AC_TEMP_UP, "AI_TEMP+");
-      else if (newTemp < acTemp)
-        sendACCommand(IR_AC_TEMP_DOWN, "AI_TEMP-");
-
-      acTemp = newTemp;
-      addLog("SUCCESS", "AC adj " + String(acTemp) + "C");
-      autoOptimizations++;
+      sendDaikinCommand("VOICE_ADJUST");
+      addLog("SUCCESS", "AC adj " + String(acTemp) + "C " + fanSpeedToString(acFan));
     }
   }
 
   String reason = doc["reason"] | "No reason";
   addLog("INFO", "Why: " + reason.substring(0, 30));
+  lastAIResponse = reason;
 }
 
-// ============ TỰ ĐỘNG TỐI ƯU - DÙNG LOCAL AI ============
-void autoLLMOptimize()
-{
-  static unsigned long lastCheck = 0;
-  static float lastTemp = 0;
-  static bool lastPresence = false;
-  static bool lastAcStatus = false;
-
-  if (millis() - lastCheck < 15000)
-    return;
-
-  bool trigger = false;
-  String triggerReason = "";
-
-  // Trigger 1: Nhiệt độ thay đổi > 1.5°C
-  if (abs(temperature - lastTemp) > 1.5)
-  {
-    triggerReason = "Temp change: " + String(lastTemp, 1) + " -> " + String(temperature, 1);
-    addLog("INFO", triggerReason);
-    trigger = true;
-  }
-
-  // Trigger 2: Presence thay đổi
-  if (presenceDetected != lastPresence)
-  {
-    triggerReason = "Presence: " + String(lastPresence ? "Y" : "N") + " -> " + String(presenceDetected ? "Y" : "N");
-    addLog("INFO", triggerReason);
-    trigger = true;
-  }
-
-  // Trigger 3: Quá nóng mà AC chưa bật
-  if (temperature > 28 && !acStatus && presenceDetected)
-  {
-    triggerReason = "Too hot: " + String(temperature, 1) + "C, AC OFF, person present";
-    addLog("WARN", triggerReason);
-    trigger = true;
-  }
-
-  // Trigger 4: Quá lạnh mà AC vẫn bật
-  if (temperature < 23 && acStatus)
-  {
-    triggerReason = "Too cold: " + String(temperature, 1) + "C, AC ON";
-    addLog("WARN", triggerReason);
-    trigger = true;
-  }
-
-  // Trigger 5: Không có người > 5 phút mà AC vẫn bật
-  if (!presenceDetected && !motionDetected && acStatus)
-  {
-    if (millis() - lastPresenceTime > 300000) // 5 phút
-    {
-      triggerReason = "No presence 5min, AC still ON";
-      addLog("WARN", triggerReason);
-      trigger = true;
-    }
-  }
-
-  // Trigger 6: AC status thay đổi (bật/tắt thủ công)
-  if (acStatus != lastAcStatus)
-  {
-    triggerReason = "AC manual change: " + String(lastAcStatus ? "ON" : "OFF") + " -> " + String(acStatus ? "ON" : "OFF");
-    addLog("INFO", triggerReason);
-    // Không trigger khi thay đổi thủ công, chỉ log
-    lastAcStatus = acStatus;
-  }
-
-  if (trigger && llmEnabled)
-  {
-    // DÙNG LOCAL AI (mockLLM) thay vì gọi API
-    addLog("INFO", "AI analyzing: " + triggerReason);
-    String response = mockLLM("Auto optimize: " + triggerReason);
-    if (response.length() > 0 && response.indexOf("error") == -1)
-    {
-      processLLMDecision(response);
-    }
-    lastTemp = temperature;
-    lastPresence = presenceDetected;
-    lastAcStatus = acStatus;
-  }
-  else if (!llmEnabled && trigger)
-  {
-    addLog("WARN", "AI disabled, skip optimization");
-  }
-
-  lastCheck = millis();
-}
-
-// ============ XỬ LÝ NÚT BẤM - THÊM NÚT THỨ 3 ============
+// ============ XỬ LÝ NÚT BẤM ============
 void handleButtons()
 {
   static bool lastPowerBtn = HIGH;
@@ -588,7 +751,6 @@ void handleButtons()
   static bool lastTestPresenceBtn = HIGH;
   static unsigned long lastPressTime = 0;
 
-  // Chống dội phím
   if (millis() - lastPressTime < 500)
     return;
 
@@ -596,59 +758,28 @@ void handleButtons()
   bool currentAIBtn = digitalRead(BTN_AI);
   bool currentTestPresenceBtn = digitalRead(BTN_TEST_PRESENCE);
 
-  // NÚT 1: BẬT/TẮT ĐIỀU HÒA
   if (lastPowerBtn == HIGH && currentPowerBtn == LOW)
   {
     lastPressTime = millis();
     acStatus = !acStatus;
-
-    if (acStatus)
-    {
-      addLog("INFO", "BTN: AC turned ON");
-      beep(100, 1);
-    }
-    else
-    {
-      addLog("INFO", "BTN: AC turned OFF");
-      beep(50, 2);
-    }
-
-    sendACCommand(IR_AC_POWER, "BTN_POWER");
-    digitalWrite(LED_STATUS, acStatus);
+    addLog("INFO", acStatus ? "BTN: AC ON" : "BTN: AC OFF");
+    beep(acStatus ? 100 : 50, acStatus ? 1 : 2);
+    sendDaikinCommand("BTN_POWER");
     updateLCD();
   }
 
-  // NÚT 2: BẬT/TẮT CHẾ ĐỘ AI
   if (lastAIBtn == HIGH && currentAIBtn == LOW)
   {
     lastPressTime = millis();
-    llmEnabled = !llmEnabled;
-
-    digitalWrite(LED_AI, llmEnabled);
-
-    if (llmEnabled)
-    {
-      addLog("INFO", "BTN: AI Mode ENABLED");
-      beep(100, 2);
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("AI Mode: ON");
-      delay(1500);
-    }
-    else
-    {
-      addLog("INFO", "BTN: AI Mode DISABLED");
-      beep(50, 3);
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("AI Mode: OFF");
-      delay(1500);
-    }
-
+    aiEnabled = !aiEnabled;
+    addLog("INFO", aiEnabled ? "BTN: AI ON" : "BTN: AI OFF");
+    beep(100, aiEnabled ? 2 : 3);
+    lcd.clear();
+    lcd.print(aiEnabled ? "AI Mode: ON" : "AI Mode: OFF");
+    delay(1500);
     updateLCD();
   }
 
-  // NÚT 3: TEST PRESENCE - GIẢ LẬP CÓ NGƯỜI (CHO WOKWI)
   if (lastTestPresenceBtn == HIGH && currentTestPresenceBtn == LOW)
   {
     lastPressTime = millis();
@@ -656,41 +787,27 @@ void handleButtons()
 
     if (testPresenceMode)
     {
-      // Giả lập CÓ NGƯỜI
+      // ✅ Khi BẬT test mode - giả lập có người
       presenceDetected = true;
       motionDetected = true;
-      presenceDistance = 50.0; // 50cm - trong phạm vi phát hiện
+      presenceDistance = 50.0;
       lastPresenceTime = millis();
       lastMotionTime = millis();
-
-      addLog("INFO", "TEST: PRESENCE ON (Simulated)");
+      addLog("INFO", "✓ TEST MODE: PRESENCE FORCED ON");
       beep(100, 3);
-
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("TEST: PRESENCE");
-      lcd.setCursor(0, 1);
-      lcd.print("Status: ON");
-      delay(1500);
     }
     else
     {
-      // Giả lập KHÔNG CÓ NGƯỜI
-      presenceDetected = false;
-      motionDetected = false;
-      presenceDistance = 200.0; // Ngoài phạm vi
-
-      addLog("INFO", "TEST: PRESENCE OFF (Simulated)");
+      // ✅ Khi TẮT test mode - reset về thực tế
+      addLog("INFO", "✓ TEST MODE: OFF - REAL SENSORS");
       beep(50, 3);
-
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("TEST: PRESENCE");
-      lcd.setCursor(0, 1);
-      lcd.print("Status: OFF");
-      delay(1500);
     }
 
+    lcd.clear();
+    lcd.print("TEST: PRESENCE");
+    lcd.setCursor(0, 1);
+    lcd.print(testPresenceMode ? "Status: ON" : "Status: OFF");
+    delay(1500);
     updateLCD();
   }
 
@@ -702,82 +819,14 @@ void handleButtons()
 // ============ NHẬN IR ============
 void receiveIR()
 {
-  if (irLearningMode)
-  {
-    captureIRCommand();
-    return;
-  }
-
   if (irrecv.decode(&results))
   {
     uint32_t irCode = results.value;
-    if (irCode == 0xFFFFFFFF)
+    if (irCode != 0xFFFFFFFF)
     {
-      irrecv.resume();
-      return;
-    }
-
-    addLog("INFO", "IR RECV: 0x" + String(irCode, HEX));
-    irCommands++;
-
-    switch (irCode)
-    {
-    case IR_AC_POWER:
-      acStatus = !acStatus;
-      digitalWrite(LED_STATUS, acStatus);
-      updateLCD();
-      beep(100, 1);
-      break;
-    case IR_AC_TEMP_UP:
-      if (acStatus && acTemp < 30)
-      {
-        acTemp++;
-        updateLCD();
-        beep(50, 1);
-      }
-      break;
-    case IR_AC_TEMP_DOWN:
-      if (acStatus && acTemp > 16)
-      {
-        acTemp--;
-        updateLCD();
-        beep(50, 1);
-      }
-      break;
-    case IR_AC_MODE:
-      if (acStatus)
-      {
-        if (acMode == "COOL")
-          acMode = "DRY";
-        else if (acMode == "DRY")
-          acMode = "FAN";
-        else
-          acMode = "COOL";
-        updateLCD();
-        beep(80, 1);
-      }
-      break;
-    case IR_AC_FAN:
-      if (acStatus)
-      {
-        acFan++;
-        if (acFan > 3)
-          acFan = 1;
-        updateLCD();
-        beep(60, 1);
-      }
-      break;
-    default:
-      for (int i = 0; i < learnedCount; i++)
-      {
-        if (learnedCommands[i].code == irCode)
-        {
-          addLog("INFO", "Learned cmd: " + learnedCommands[i].name);
-          beep(100, 2);
-          break;
-        }
-      }
-      break;
+      addLog("INFO", "IR RECV: 0x" + String(irCode, HEX));
+      irCommands++;
+      beep(80, 1);
     }
     irrecv.resume();
   }
@@ -799,43 +848,65 @@ bool authenticateRequest(AsyncWebServerRequest *request)
     if (request->getParam("api_key")->value() == API_KEY)
       return true;
   }
-  addLog("WARN", "Unauthorized");
   return false;
 }
-// ============ CORS HANDLER ============
-void setupCORS()
+
+// ============ SETUP WEBSERVER ============
+// ============ TRONG HÀM setupWebServer() - THÊM VÀO ĐẦU ============
+
+// ============ SETUP WEBSERVER ============
+// ============ TRONG HÀM setupWebServer() - THÊM VÀO ĐẦU ============
+
+void setupWebServer()
 {
-  // Handle preflight OPTIONS request
+  // ✅ BẮT BUỘC: XỬ LÝ CORS TRƯỚC KHI ĐỊNH NGHĨA ROUTES
+
+  // 1. Thêm default headers cho TẤT CẢ responses
+  // CHỈ CẦN CÀI ĐẶT 1 LẦN TẠI ĐÂY
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+  DefaultHeaders::Instance().addHeader("Access-Control-Max-Age", "3600");
+
+  // 2. ✅ XỬ LÝ OPTIONS PREFLIGHT CHO MỌI ENDPOINT
   server.onNotFound([](AsyncWebServerRequest *request)
                     {
     if (request->method() == HTTP_OPTIONS) {
+      // Tự động áp dụng DefaultHeaders
       request->send(200);
     } else {
       request->send(404, "application/json", "{\"error\":\"Not found\"}");
     } });
-}
-// ============ SETUP WEBSERVER ============
-void setupWebServer()
-{
-  // Root endpoint
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
-            { 
-              DynamicJsonDocument doc(512);
-              doc["name"] = "AC Control System";
-              doc["version"] = "5.2-Fixed";
-              doc["status"] = "ok";
-              doc["features"]["ai_mode"] = "local";
-              doc["features"]["voice_control"] = true;
-              doc["features"]["ir_hub"] = true;
-              String response;
-              serializeJson(doc, response);
-              request->send(200, "application/json", response); });
 
-  // GET sensor data
+  // 3. ✅ OPTIONS handler tổng quát
+  server.on("/*", HTTP_OPTIONS, [](AsyncWebServerRequest *request)
+            { 
+              // Tự động áp dụng DefaultHeaders
+              request->send(200); });
+
+  // ============ CÁC ROUTES KHÁC GIỮ NGUYÊN ============
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+    DynamicJsonDocument doc(512);
+    doc["name"] = "Daikin AC Control";
+    doc["version"] = "7.2-CORS-Fixed";
+    doc["model"] = "Daikin";
+    doc["ai_mode"] = "Mock LLM (Embedded)";
+    doc["status"] = "ok";
+    String response;
+    serializeJson(doc, response);
+    
+    AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+    // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+    request->send(resp); });
+
   server.on("/sensors", HTTP_GET, [](AsyncWebServerRequest *request)
             {
     if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
       return;
     }
     
@@ -846,623 +917,249 @@ void setupWebServer()
     doc["motion"] = motionDetected;
     doc["presence"] = presenceDetected;
     doc["presence_distance"] = presenceDistance;
+    doc["test_mode"] = testPresenceMode;
     doc["ac_status"] = acStatus;
     doc["ac_temp"] = acTemp;
     doc["ac_mode"] = acMode;
-    doc["ac_fan"] = acFan;
-    doc["llm_enabled"] = llmEnabled;
-    doc["timestamp"] = millis();
+    doc["ac_fan"] = fanSpeedToString(acFan);
+    doc["ac_fan_level"] = fanSpeedToInt(acFan);
+    doc["llm_enabled"] = aiEnabled;
+    doc["model"] = "Daikin";
     
     String response;
     serializeJson(doc, response);
-    request->send(200, "application/json", response); });
+    
+    AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+    // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+    request->send(resp); });
 
-  // GET AC status
+  // ✅ FIX: /ac/command
+  server.on("/ac/command", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+            {
+    
+    if (!authenticateRequest(request)) {
+      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
+      return;
+    }
+    
+    DynamicJsonDocument doc(512);
+    deserializeJson(doc, (const char*)data);
+    
+    bool changed = false;
+    
+    if (doc.containsKey("status")) {
+      acStatus = doc["status"].as<bool>();
+      changed = true;
+    }
+    
+    if (doc.containsKey("temperature")) {
+      int temp = doc["temperature"];
+      if (temp >= 16 && temp <= 30) {
+        acTemp = temp;
+        changed = true;
+      }
+    }
+    
+    if (doc.containsKey("mode")) {
+      String mode = doc["mode"].as<String>();
+      mode.toUpperCase();
+      if (mode == "COOL" || mode == "HEAT" || mode == "DRY" || 
+          mode == "FAN" || mode == "AUTO") {
+        acMode = mode;
+        changed = true;
+      }
+    }
+    
+    if (doc.containsKey("fan_speed")) {
+      if (doc["fan_speed"].is<String>()) {
+        acFan = stringToFanSpeed(doc["fan_speed"].as<String>());
+      } else {
+        int fan = doc["fan_speed"];
+        acFan = intToFanSpeed(fan);
+      }
+      changed = true;
+    }
+    
+    if (changed) {
+      sendDaikinCommand("API_COMMAND");
+      
+      DynamicJsonDocument respDoc(512);
+      respDoc["success"] = true;
+      respDoc["status"] = acStatus ? "on" : "off";
+      respDoc["temperature"] = acTemp;
+      respDoc["mode"] = acMode;
+      respDoc["fan_speed"] = fanSpeedToString(acFan);
+      respDoc["fan_level"] = fanSpeedToInt(acFan);
+      
+      String response;
+      serializeJson(respDoc, response);
+      
+      AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
+    } else {
+      AsyncWebServerResponse *resp = request->beginResponse(400, "application/json", "{\"error\":\"No valid settings\"}");
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
+    } });
+
+  // ✅ FIX: /ai/toggle
+  server.on("/ai/toggle", HTTP_POST, [](AsyncWebServerRequest *request)
+            {
+    if (!authenticateRequest(request)) {
+      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
+      return;
+    }
+    
+    aiEnabled = !aiEnabled;
+    
+    DynamicJsonDocument doc(256);
+    doc["success"] = true;
+    doc["ai_enabled"] = aiEnabled;
+    doc["message"] = aiEnabled ? "AI enabled" : "AI disabled";
+    
+    String response;
+    serializeJson(doc, response);
+    
+    addLog("INFO", aiEnabled ? "AI Mode: ENABLED" : "AI Mode: DISABLED");
+    
+    AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+    // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+    request->send(resp);
+    
+    updateLCD(); });
+
+  // ✅ FIX: /voice/command
+  server.on("/voice/command", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+            {
+    
+    if (!authenticateRequest(request)) {
+      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
+      return;
+    }
+    
+    DynamicJsonDocument doc(512);
+    deserializeJson(doc, (const char*)data);
+    
+    String voiceText = doc["text"] | "";
+    if (voiceText.length() == 0) {
+      AsyncWebServerResponse *resp = request->beginResponse(400, "application/json", "{\"error\":\"Missing text\"}");
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
+      return;
+    }
+    
+    addLog("INFO", "Voice: " + voiceText);
+    
+    // ✅ Forward đến Flask Gemini Server
+    String apiResponse = callVoiceAPI(voiceText);
+    
+    if (apiResponse.length() > 0 && apiResponse.indexOf("error") == -1) {
+      processAIDecision(apiResponse);
+      
+      // Parse response để lấy đầy đủ thông tin
+      DynamicJsonDocument respDoc(768);
+      int jsonStart = apiResponse.indexOf('{');
+      int jsonEnd = apiResponse.lastIndexOf('}');
+      
+      if (jsonStart != -1 && jsonEnd != -1) {
+        String jsonStr = apiResponse.substring(jsonStart, jsonEnd + 1);
+        DynamicJsonDocument geminiDoc(512);
+        DeserializationError error = deserializeJson(geminiDoc, jsonStr);
+        
+        if (!error) {
+          respDoc["success"] = true;
+          respDoc["action"] = geminiDoc["action"] | "unknown";
+          respDoc["temperature"] = geminiDoc["temperature"] | acTemp;
+          respDoc["fan_speed"] = geminiDoc["fan_speed"] | fanSpeedToString(acFan);
+          respDoc["mode"] = geminiDoc["mode"] | acMode;
+          respDoc["reason"] = geminiDoc["reason"] | lastAIResponse;
+          
+          // ✅ QUAN TRỌNG: Thêm audio_url nếu có
+          if (geminiDoc.containsKey("audio_url")) {
+            respDoc["audio_url"] = geminiDoc["audio_url"].as<String>();
+          }
+        } else {
+          respDoc["success"] = true;
+          respDoc["reason"] = lastAIResponse;
+        }
+      } else {
+        respDoc["success"] = true;
+        respDoc["reason"] = lastAIResponse;
+      }
+      
+      String response;
+      serializeJson(respDoc, response);
+      
+      AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
+      
+    } else {
+      AsyncWebServerResponse *resp = request->beginResponse(500, "application/json", 
+        "{\"error\":\"Voice API failed\",\"reason\":\"Không kết nối được Gemini server\"}");
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
+    } });
+
+  // ============ CÁC ENDPOINT KHÁC - ĐÃ XÓA CORS HEADERS ============
+
   server.on("/ac/status", HTTP_GET, [](AsyncWebServerRequest *request)
             {
     if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
       return;
     }
     
-    DynamicJsonDocument doc(384);
+    DynamicJsonDocument doc(768);
     doc["status"] = acStatus ? "on" : "off";
     doc["temperature"] = acTemp;
     doc["mode"] = acMode;
-    doc["fan_speed"] = acFan;
-    doc["ai_enabled"] = llmEnabled;
+    doc["fan_speed"] = fanSpeedToString(acFan);
+    doc["fan_level"] = fanSpeedToInt(acFan);
+    doc["llm_enabled"] = aiEnabled;
+    doc["model"] = "Daikin";
     
     String response;
     serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // POST AC command (manual control)
-  server.on("/ac/command", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
-            {
-      if (!authenticateRequest(request)) {
-        request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-        return;
-      }
-      
-      DynamicJsonDocument doc(300);
-      deserializeJson(doc, (const char*)data);
-      
-      if (doc.containsKey("status")) {
-        acStatus = doc["status"];
-        sendACCommand(IR_AC_POWER, "API_POWER");
-      }
-      if (doc.containsKey("temp")) {
-        acTemp = constrain(doc["temp"].as<int>(), 16, 30);
-        sendACCommand(IR_AC_TEMP_UP, "API_TEMP");
-      }
-      if (doc.containsKey("mode")) {
-        acMode = doc["mode"].as<String>();
-        sendACCommand(IR_AC_MODE, "API_MODE");
-      }
-      if (doc.containsKey("fan")) {
-        acFan = constrain(doc["fan"].as<int>(), 1, 3);
-        sendACCommand(IR_AC_FAN, "API_FAN");
-      }
-      
-      request->send(200, "application/json", "{\"success\":true}"); });
-
-  // POST AI optimize (local AI)
-  server.on("/ai/optimize", HTTP_POST, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
     
-    if (!llmEnabled) {
-      request->send(400, "application/json", "{\"error\":\"AI disabled\"}");
-      return;
-    }
-    
-    String response = mockLLM("Optimize AC settings based on sensors");
-    if (response.length() > 0 && response.indexOf("error") == -1) {
-      processLLMDecision(response);
-      request->send(200, "application/json", 
-        "{\"success\":true,\"response\":" + response + "}");
-    } else {
-      request->send(500, "application/json", "{\"error\":\"AI failed\"}");
-    } });
+    AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+    // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+    request->send(resp); });
 
-  // POST AI toggle - CẬP NHẬT
-  server.on("/ai/toggle", HTTP_POST, [](AsyncWebServerRequest *request)
-            {
-    totalRequests++;
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-
-    llmEnabled = !llmEnabled;
-    digitalWrite(LED_AI, llmEnabled);
-    
-    addLog("INFO", llmEnabled ? "AI Mode ENABLED via API" : "AI Mode DISABLED via API");
-    
-    String response = "{\"ai_mode\":\"" + String(llmEnabled ? "on" : "off") + "\",\"message\":\"AI mode toggled\"}";
-    request->send(200, "application/json", response); });
-
-  // GET AI status - CẬP NHẬT
-  server.on("/ai/status", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-    totalRequests++;
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-
-    DynamicJsonDocument doc(256);
-    doc["ai_enabled"] = llmEnabled;
-    doc["ai_processing"] = llmProcessing;
-    doc["last_response"] = lastLLMResponse.substring(0, 50);
-
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // POST Voice command (gửi lên server Python để xử lý)
-  server.on("/voice/command", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
-            {
-      if (!authenticateRequest(request)) {
-        request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-        return;
-      }
-      
-      DynamicJsonDocument inputDoc(512);
-      deserializeJson(inputDoc, (const char*)data);
-      
-      String voiceText = inputDoc["text"] | "";
-      if (voiceText.length() == 0) {
-        request->send(400, "application/json", "{\"error\":\"Missing text\"}");
-        return;
-      }
-      
-      addLog("INFO", "Voice: " + voiceText.substring(0, 30));
-      voiceCommands++;
-      
-      // Gửi lên Python server để xử lý
-      if (WiFi.status() == WL_CONNECTED) {
-        HTTPClient http;
-        String url = String(VOICE_API_URL) + "?api_key=" + API_KEY;
-        http.begin(url);
-        http.addHeader("Content-Type", "application/json");
-        http.setTimeout(15000);
-        
-        DynamicJsonDocument sendDoc(512);
-        sendDoc["text"] = voiceText;
-        sendDoc["temperature"] = temperature;
-        sendDoc["humidity"] = humidity;
-        sendDoc["ac_status"] = acStatus;
-        sendDoc["ac_temp"] = acTemp;
-        
-        String requestBody;
-        serializeJson(sendDoc, requestBody);
-        
-        int httpCode = http.POST(requestBody);
-        
-        if (httpCode == 200) {
-          String pythonResponse = http.getString();
-          addLog("SUCCESS", "Voice processed");
-          
-          // Xử lý quyết định từ Python
-          processLLMDecision(pythonResponse);
-          
-          request->send(200, "application/json", pythonResponse);
-        } else {
-          addLog("ERROR", "Voice HTTP " + String(httpCode));
-          request->send(500, "application/json", 
-            "{\"error\":\"Server error\"}");
-        }
-        http.end();
-      } else {
-        request->send(503, "application/json", "{\"error\":\"No WiFi\"}");
-      } });
-
-  // POST IR learning
-  server.on("/ir/learn", HTTP_POST, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    startIRLearning();
-    request->send(200, "application/json", "{\"status\":\"learning_started\"}"); });
-
-  // GET IR commands
-  server.on("/ir/commands", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    DynamicJsonDocument doc(1024);
-    JsonArray arr = doc.createNestedArray("commands");
-    for (int i = 0; i < learnedCount; i++) {
-      JsonObject obj = arr.createNestedObject();
-      obj["name"] = learnedCommands[i].name;
-      obj["code"] = String(learnedCommands[i].code, HEX);
-      obj["type"] = learnedCommands[i].type;
-    }
-    doc["count"] = learnedCount;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // GET statistics
   server.on("/stats", HTTP_GET, [](AsyncWebServerRequest *request)
             {
     if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      request->send(resp);
       return;
     }
     
     DynamicJsonDocument doc(768);
     doc["uptime"] = millis() / 1000;
-    doc["llm_requests"] = llmRequests;
+    doc["model"] = "Daikin";
     doc["ir_commands"] = irCommands;
-    doc["auto_optimizations"] = autoOptimizations;
     doc["voice_commands"] = voiceCommands;
-    doc["temperature"] = temperature;
-    doc["ac_status"] = acStatus;
-    doc["ac_temp"] = acTemp;
-    doc["free_heap"] = ESP.getFreeHeap();
-    doc["ai_mode"] = "local";
+    doc["auto_optimizations"] = autoOptimizations;
     
     String response;
     serializeJson(doc, response);
-    request->send(200, "application/json", response); });
+    
+    AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+    // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+    request->send(resp); });
 
-  // GET logs
-  server.on("/logs", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    DynamicJsonDocument doc(4096);
-    JsonArray arr = doc.createNestedArray("logs");
-    for (int i = 0; i < logCount; i++) {
-      int idx = (logIndex - logCount + i + MAX_LOGS) % MAX_LOGS;
-      JsonObject obj = arr.createNestedObject();
-      obj["timestamp"] = logBuffer[idx].timestamp;
-      obj["level"] = logBuffer[idx].level;
-      obj["message"] = logBuffer[idx].message;
-    }
-    doc["count"] = logCount;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // GET system info
-  server.on("/system/info", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    DynamicJsonDocument doc(768);
-    doc["version"] = "5.2-Fixed";
-    doc["chip_model"] = "ESP32";
-    doc["flash_size"] = ESP.getFlashChipSize();
-    doc["free_heap"] = ESP.getFreeHeap();
-    doc["wifi_rssi"] = WiFi.RSSI();
-    doc["ip_address"] = WiFi.localIP().toString();
-    doc["ai_mode"] = "local";
-    doc["features"]["voice_control"] = true;
-    doc["features"]["ir_hub"] = true;
-    doc["features"]["auto_optimize"] = true;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // POST AC power (bật/tắt)
-  server.on("/ac/power", HTTP_POST, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    acStatus = !acStatus;
-    sendACCommand(IR_AC_POWER, acStatus ? "API_POWER_ON" : "API_POWER_OFF");
-    
-    DynamicJsonDocument doc(256);
-    doc["success"] = true;
-    doc["ac_status"] = acStatus ? "on" : "off";
-    doc["temperature"] = acTemp;
-    doc["mode"] = acMode;
-    doc["fan"] = acFan;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // POST AC temperature up
-  server.on("/ac/temp/up", HTTP_POST, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    if (!acStatus) {
-      request->send(400, "application/json", "{\"error\":\"AC is OFF\"}");
-      return;
-    }
-    
-    if (acTemp >= 30) {
-      request->send(400, "application/json", "{\"error\":\"Max temp reached\"}");
-      return;
-    }
-    
-    acTemp++;
-    sendACCommand(IR_AC_TEMP_UP, "API_TEMP_UP");
-    
-    DynamicJsonDocument doc(256);
-    doc["success"] = true;
-    doc["temperature"] = acTemp;
-    doc["message"] = "Temperature increased to " + String(acTemp) + "°C";
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // POST AC temperature down
-  server.on("/ac/temp/down", HTTP_POST, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    if (!acStatus) {
-      request->send(400, "application/json", "{\"error\":\"AC is OFF\"}");
-      return;
-    }
-    
-    if (acTemp <= 16) {
-      request->send(400, "application/json", "{\"error\":\"Min temp reached\"}");
-      return;
-    }
-    
-    acTemp--;
-    sendACCommand(IR_AC_TEMP_DOWN, "API_TEMP_DOWN");
-    
-    DynamicJsonDocument doc(256);
-    doc["success"] = true;
-    doc["temperature"] = acTemp;
-    doc["message"] = "Temperature decreased to " + String(acTemp) + "°C";
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // POST AC temperature set (set trực tiếp)
-  server.on("/ac/temp/set", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
-            {
-      if (!authenticateRequest(request)) {
-        request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-        return;
-      }
-      
-      if (!acStatus) {
-        request->send(400, "application/json", "{\"error\":\"AC is OFF\"}");
-        return;
-      }
-      
-      DynamicJsonDocument doc(256);
-      deserializeJson(doc, (const char*)data);
-      
-      if (!doc.containsKey("temperature")) {
-        request->send(400, "application/json", "{\"error\":\"Missing temperature\"}");
-        return;
-      }
-      
-      int targetTemp = doc["temperature"];
-      if (targetTemp < 16 || targetTemp > 30) {
-        request->send(400, "application/json", "{\"error\":\"Temp must be 16-30°C\"}");
-        return;
-      }
-      
-      // Tăng/giảm nhiệt độ từ từ
-      while (acTemp < targetTemp) {
-        acTemp++;
-        sendACCommand(IR_AC_TEMP_UP, "API_TEMP_SET_UP");
-        delay(300);
-      }
-      while (acTemp > targetTemp) {
-        acTemp--;
-        sendACCommand(IR_AC_TEMP_DOWN, "API_TEMP_SET_DOWN");
-        delay(300);
-      }
-      
-      DynamicJsonDocument respDoc(256);
-      respDoc["success"] = true;
-      respDoc["temperature"] = acTemp;
-      respDoc["message"] = "Temperature set to " + String(acTemp) + "°C";
-      
-      String response;
-      serializeJson(respDoc, response);
-      request->send(200, "application/json", response); });
-
-  // POST AC mode (chuyển chế độ)
-  server.on("/ac/mode", HTTP_POST, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    if (!acStatus) {
-      request->send(400, "application/json", "{\"error\":\"AC is OFF\"}");
-      return;
-    }
-    
-    // Cycle: COOL -> DRY -> FAN -> COOL
-    if (acMode == "COOL") {
-      acMode = "DRY";
-    } else if (acMode == "DRY") {
-      acMode = "FAN";
-    } else {
-      acMode = "COOL";
-    }
-    
-    sendACCommand(IR_AC_MODE, "API_MODE_CHANGE");
-    
-    DynamicJsonDocument doc(256);
-    doc["success"] = true;
-    doc["mode"] = acMode;
-    doc["message"] = "Mode changed to " + acMode;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // POST AC mode set (set trực tiếp chế độ)
-  server.on("/ac/mode/set", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
-            {
-      if (!authenticateRequest(request)) {
-        request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-        return;
-      }
-      
-      if (!acStatus) {
-        request->send(400, "application/json", "{\"error\":\"AC is OFF\"}");
-        return;
-      }
-      
-      DynamicJsonDocument doc(256);
-      deserializeJson(doc, (const char*)data);
-      
-      if (!doc.containsKey("mode")) {
-        request->send(400, "application/json", "{\"error\":\"Missing mode\"}");
-        return;
-      }
-      
-      String targetMode = doc["mode"].as<String>();
-      targetMode.toUpperCase();
-      
-      if (targetMode != "COOL" && targetMode != "DRY" && targetMode != "FAN") {
-        request->send(400, "application/json", "{\"error\":\"Invalid mode. Use: COOL, DRY, FAN\"}");
-        return;
-      }
-      
-      // Chuyển mode cho đến khi đạt target
-      int maxAttempts = 3;
-      while (acMode != targetMode && maxAttempts > 0) {
-        if (acMode == "COOL") acMode = "DRY";
-        else if (acMode == "DRY") acMode = "FAN";
-        else acMode = "COOL";
-        
-        sendACCommand(IR_AC_MODE, "API_MODE_SET");
-        delay(300);
-        maxAttempts--;
-      }
-      
-      DynamicJsonDocument respDoc(256);
-      respDoc["success"] = true;
-      respDoc["mode"] = acMode;
-      respDoc["message"] = "Mode set to " + acMode;
-      
-      String response;
-      serializeJson(respDoc, response);
-      request->send(200, "application/json", response); });
-
-  // POST AC fan (chuyển mức quạt)
-  server.on("/ac/fan", HTTP_POST, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    if (!acStatus) {
-      request->send(400, "application/json", "{\"error\":\"AC is OFF\"}");
-      return;
-    }
-    
-    // Cycle: 1 -> 2 -> 3 -> 1
-    acFan++;
-    if (acFan > 3) acFan = 1;
-    
-    sendACCommand(IR_AC_FAN, "API_FAN_CHANGE");
-    
-    DynamicJsonDocument doc(256);
-    doc["success"] = true;
-    doc["fan_speed"] = acFan;
-    doc["message"] = "Fan speed changed to " + String(acFan);
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // POST AC fan set (set trực tiếp mức quạt)
-  server.on("/ac/fan/set", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
-            {
-      if (!authenticateRequest(request)) {
-        request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-        return;
-      }
-      
-      if (!acStatus) {
-        request->send(400, "application/json", "{\"error\":\"AC is OFF\"}");
-        return;
-      }
-      
-      DynamicJsonDocument doc(256);
-      deserializeJson(doc, (const char*)data);
-      
-      if (!doc.containsKey("speed")) {
-        request->send(400, "application/json", "{\"error\":\"Missing speed\"}");
-        return;
-      }
-      
-      int targetSpeed = doc["speed"];
-      if (targetSpeed < 1 || targetSpeed > 3) {
-        request->send(400, "application/json", "{\"error\":\"Speed must be 1-3\"}");
-        return;
-      }
-      
-      // Chuyển fan speed cho đến khi đạt target
-      int maxAttempts = 3;
-      while (acFan != targetSpeed && maxAttempts > 0) {
-        acFan++;
-        if (acFan > 3) acFan = 1;
-        
-        sendACCommand(IR_AC_FAN, "API_FAN_SET");
-        delay(300);
-        maxAttempts--;
-      }
-      
-      DynamicJsonDocument respDoc(256);
-      respDoc["success"] = true;
-      respDoc["fan_speed"] = acFan;
-      respDoc["message"] = "Fan speed set to " + String(acFan);
-      
-      String response;
-      serializeJson(respDoc, response);
-      request->send(200, "application/json", response); });
-
-  // GET AC modes (danh sách các chế độ có sẵn)
-  server.on("/ac/modes", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    DynamicJsonDocument doc(512);
-    JsonArray modes = doc.createNestedArray("modes");
-    modes.add("COOL");
-    modes.add("DRY");
-    modes.add("FAN");
-    
-    doc["current_mode"] = acMode;
-    doc["ac_status"] = acStatus ? "on" : "off";
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // GET AC fan speeds (danh sách mức quạt)
-  server.on("/ac/fan/speeds", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-    if (!authenticateRequest(request)) {
-      request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      return;
-    }
-    
-    DynamicJsonDocument doc(512);
-    JsonArray speeds = doc.createNestedArray("speeds");
-    speeds.add(1);
-    speeds.add(2);
-    speeds.add(3);
-    
-    doc["current_speed"] = acFan;
-    doc["ac_status"] = acStatus ? "on" : "off";
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response); });
-
-  // Thêm CORS headers đầy đủ
-  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
-  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  DefaultHeaders::Instance().addHeader("Access-Control-Max-Age", "86400");
-
-  setupCORS(); // Gọi hàm xử lý CORS
   server.begin();
-  addLog("SUCCESS", "WebServer v5.2-Fixed OK");
+  addLog("SUCCESS", "WebServer with CORS OK (v3 Fixed)");
 }
 
 // ============ SETUP ============
@@ -1472,42 +1169,26 @@ void setup()
   delay(1000);
 
   Serial.println("\n╔═══════════════════════════════╗");
-  Serial.println("║  AC CONTROL v5.2 - TEST MODE  ║");
-  Serial.println("║  • Local AI (Mock LLM)        ║");
-  Serial.println("║  • Voice Control via Python   ║");
-  Serial.println("║  • HC-SR04 Presence Detection ║");
-  Serial.println("║  • IR Hub (Learn & Send)      ║");
-  Serial.println("║  • TEST PRESENCE BUTTON       ║");
+  Serial.println("║  DAIKIN AC CONTROL v7.1       ║");
+  Serial.println("║  ✅ Test Mode AI Fixed        ║");
+  Serial.println("║  ✅ LCD Rotation Display      ║");
+  Serial.println("║  ✅ Fast AI Cooldown (5s)     ║");
   Serial.println("╚═══════════════════════════════╝");
 
-  // Setup các chân
-  pinMode(LED_STATUS, OUTPUT);
-  pinMode(LED_WIFI, OUTPUT);
-  pinMode(LED_ERROR, OUTPUT);
-  pinMode(LED_AI, OUTPUT);
   pinMode(BTN_POWER, INPUT_PULLUP);
   pinMode(BTN_AI, INPUT_PULLUP);
-  pinMode(BTN_TEST_PRESENCE, INPUT_PULLUP); // NÚT MỚI
+  pinMode(BTN_TEST_PRESENCE, INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(PIR_PIN, INPUT);
   pinMode(RADAR_TRIG_PIN, OUTPUT);
   pinMode(RADAR_ECHO_PIN, INPUT);
 
-  // Khởi tạo LED
-  digitalWrite(LED_STATUS, LOW);
-  digitalWrite(LED_WIFI, LOW);
-  digitalWrite(LED_ERROR, LOW);
-  digitalWrite(LED_AI, llmEnabled);
-
-  addLog("INFO", "Starting v5.2-TestMode...");
-
   lcd.init();
   lcd.backlight();
   lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("AC v5.2-TEST");
+  lcd.print("Daikin AC v7.1");
   lcd.setCursor(0, 1);
-  lcd.print("3 Buttons Mode");
+  lcd.print("Mock LLM Fixed");
   beep(100, 1);
 
   if (!rtc.begin())
@@ -1524,69 +1205,45 @@ void setup()
 
   irrecv.enableIRIn();
   irsend.begin();
-  addLog("SUCCESS", "IR Receiver & Sender OK");
+  addLog("SUCCESS", "Daikin IR OK");
 
-  lcd.clear();
-  lcd.print("WiFi...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 30)
   {
     delay(500);
     Serial.print(".");
-    digitalWrite(LED_WIFI, !digitalRead(LED_WIFI));
     attempts++;
   }
 
   if (WiFi.status() == WL_CONNECTED)
   {
-    digitalWrite(LED_WIFI, HIGH);
     addLog("SUCCESS", "WiFi: " + WiFi.localIP().toString());
     lcd.clear();
     lcd.print("WiFi OK!");
     lcd.setCursor(0, 1);
     lcd.print(WiFi.localIP());
     beep(100, 2);
-    timeClient.begin();
-    timeClient.update();
-    rtc.adjust(DateTime(timeClient.getEpochTime()));
     delay(2000);
   }
   else
   {
-    addLog("ERROR", "WiFi fail");
-    digitalWrite(LED_ERROR, HIGH);
+    addLog("WARN", "WiFi failed - Voice disabled");
   }
 
   setupWebServer();
 
   lcd.clear();
-  lcd.print("Ready! v5.2");
+  lcd.print("Daikin Ready!");
   lcd.setCursor(0, 1);
-  lcd.print("TEST:OFF AI:ON");
-  digitalWrite(LED_AI, llmEnabled ? HIGH : LOW);
+  lcd.print("AI:MockLLM ✓");
   beep(200, 1);
-
-  Serial.println("\n🎮 BUTTONS:");
-  Serial.println("  [RED]   BTN_POWER (D19)    - AC ON/OFF");
-  Serial.println("  [BLUE]  BTN_AI (D27)       - AI Mode Toggle");
-  Serial.println("  [GREEN] BTN_TEST (D33)     - Simulate Presence (Wokwi Test)");
+  delay(2000);
 }
 
 // ============ LOOP ============
 void loop()
 {
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    digitalWrite(LED_WIFI, LOW);
-    digitalWrite(LED_ERROR, HIGH);
-    addLog("ERROR", "WiFi lost");
-    WiFi.reconnect();
-    delay(5000);
-    return;
-  }
-
   if (millis() - lastSensorRead > sensorInterval)
   {
     lastSensorRead = millis();
@@ -1597,16 +1254,10 @@ void loop()
   handleButtons();
   receiveIR();
 
-  if (llmEnabled)
+  // ✅ AI luôn chạy khi được bật, không quan tâm test mode
+  if (aiEnabled)
   {
-    autoLLMOptimize();
-  }
-
-  static unsigned long lastBlink = 0;
-  if (llmEnabled && millis() - lastBlink > 2000)
-  {
-    digitalWrite(LED_AI, !digitalRead(LED_AI));
-    lastBlink = millis();
+    mockLLMOptimize();
   }
 
   delay(10);
