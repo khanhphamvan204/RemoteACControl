@@ -10,8 +10,8 @@ import hashlib
 app = Flask(__name__)
 
 API_KEY = "AC_SECRET_KEY_2024_LLM_V5"
-GEMINI_KEY = "AIzaSyBp-SuhE11ZXJE-YPpUqAWOqS5wHQxUKWU"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+GEMINI_KEY = "AIzaSyDCHnIMawPafYPbtHAppUXWSE1_mJlcuII"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 # Cache directory for TTS files
 TTS_CACHE_DIR = tempfile.gettempdir() + "/tts_cache"
@@ -74,7 +74,7 @@ def call_gemini(prompt, user_message, retry=True):
                 "temperature": 0.4,
                 "topP": 0.9,
                 "topK": 40,
-                "maxOutputTokens": 512
+                # "maxOutputTokens": 512
             },
             "safetySettings": [
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},

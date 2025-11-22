@@ -75,11 +75,11 @@ String acMode = "COOL";
 FanSpeed acFan = FAN_MEDIUM;
 
 // ============ BIẾN AI ============
-bool aiEnabled = true;
+bool aiEnabled = false;
 bool aiProcessing = false;
 String lastAIResponse = "";
 unsigned long lastAIOptimization = 0;
-const unsigned long AI_COOLDOWN = 5000; // ✅ GIẢM XUỐNG 5 GIÂY
+const unsigned long AI_COOLDOWN = 5000; // GIẢM XUỐNG 5 GIÂY
 
 // ============ LCD DISPLAY MODES ============
 enum DisplayMode
@@ -205,7 +205,7 @@ void reportError(String errorMsg, int blinkCount = 3)
   updateLCD();
 }
 
-// ============ ĐỌC CẢM BIẾN (✅ SỬA) ============
+// ============ ĐỌC CẢM BIẾN============
 void readSensors()
 {
   float h = dht.readHumidity();
@@ -221,10 +221,10 @@ void readSensors()
   humidity = h;
   lightLevel = analogRead(LDR_PIN);
 
-  // ✅ XỬ LÝ TEST PRESENCE MODE - VẪN CẬP NHẬT PRESENCE
+  // XỬ LÝ TEST PRESENCE MODE - VẪN CẬP NHẬT PRESENCE
   if (testPresenceMode)
   {
-    presenceDetected = true; // ✅ BẮT BUỘC TRUE KHI TEST
+    presenceDetected = true; // BẮT BUỘC TRUE KHI TEST
     motionDetected = true;
     presenceDistance = 50.0;
     lastPresenceTime = millis();
@@ -234,7 +234,7 @@ void readSensors()
     return; // Không đọc cảm biến thật
   }
 
-  // ✅ ĐỌC CẢM BIẾN THẬT KHI KHÔNG TEST
+  // ĐỌC CẢM BIẾN THẬT KHI KHÔNG TEST
   if (digitalRead(PIR_PIN) == HIGH)
   {
     motionDetected = true;
@@ -270,12 +270,12 @@ void readSensors()
                      " Dist=" + String(presenceDistance, 0) + "cm");
 }
 
-// ============ CẬP NHẬT LCD (✅ SỬA - HIỂN THỊ LUÂN PHIÊN) ============
+// ============ CẬP NHẬT LCD (HIỂN THỊ LUÂN PHIÊN) ============
 void updateLCD()
 {
   lcd.clear();
 
-  // ✅ DÒNG 1: Luôn hiển thị nhiệt độ + độ ẩm
+  //  DÒNG 1: Luôn hiển thị nhiệt độ + độ ẩm
   lcd.setCursor(0, 0);
   lcd.print("T:");
   lcd.print(temperature, 1);
@@ -284,7 +284,7 @@ void updateLCD()
   lcd.print((int)humidity);
   lcd.print("%");
 
-  // ✅ Hiển thị chỉ báo presence/test ở góc phải
+  // Hiển thị chỉ báo presence/test ở góc phải
   if (presenceDetected)
   {
     lcd.setCursor(14, 0);
@@ -297,12 +297,12 @@ void updateLCD()
     lcd.print("*");
   }
 
-  // ✅ DÒNG 2: Luân phiên hiển thị thông tin
+  // DÒNG 2: Luân phiên hiển thị thông tin
   lcd.setCursor(0, 1);
 
   if (acStatus)
   {
-    // ✅ KHI AC BẬT: Hiển thị nhiệt độ + mode + fan speed CHUẨN
+    // KHI AC BẬT: Hiển thị nhiệt độ + mode + fan speed CHUẨN
     // Format: "AC:24C C QUI" hoặc "AC:24C C HI" (16 ký tự)
     lcd.print("AC:");
     lcd.print(acTemp);
@@ -312,7 +312,7 @@ void updateLCD()
     lcd.print(acMode.substring(0, 1));
     lcd.print(" ");
 
-    // ✅ FAN SPEED: Hiển thị tên rút gọn chuẩn
+    // FAN SPEED: Hiển thị tên rút gọn chuẩn
     String fanDisplay = "";
     switch (acFan)
     {
@@ -424,7 +424,7 @@ void sendDaikinCommand(String commandName)
   updateLCD();
 }
 
-// ============ MOCK LLM - TỰ ĐỘNG TỐI ƯU (✅ SỬA) ============
+// ============ MOCK LLM - TỰ ĐỘNG TỐI ƯU  ============
 void mockLLMOptimize()
 {
   static unsigned long lastCheck = 0;
@@ -445,7 +445,7 @@ void mockLLMOptimize()
   if (aiProcessing)
     return;
 
-  // ✅ BỎ KIỂM TRA TEST MODE - CHO AI CHẠY LUÔN
+  // BỎ KIỂM TRA TEST MODE - CHO AI CHẠY LUÔN
   // Test mode CHỈ giả lập cảm biến, không chặn AI
 
   bool trigger = false;
@@ -461,7 +461,7 @@ void mockLLMOptimize()
   // ===== RULE 1: Không có người - Tắt AC =====
   if (!presenceDetected && !motionDetected && acStatus)
   {
-    if (millis() - lastPresenceTime > 60000) // ✅ GIẢM XUỐNG 1 PHÚT
+    if (millis() - lastPresenceTime > 10000) // GIẢM XUỐNG 10 GIÂY
     {
       trigger = true;
       action = "turn_off";
@@ -548,7 +548,7 @@ void mockLLMOptimize()
   // ===== RULE 7: Ban đêm → Chế độ QUIET =====
   if (!trigger && acStatus && (presenceDetected || motionDetected))
   {
-    if ((now.hour() >= 22 || now.hour() <= 6) && acFan != FAN_QUIET && lightLevel < 500)
+    if ((now.hour() >= 22 || now.hour() <= 6) && acFan != FAN_QUIET && lightLevel > 2500)
     {
       trigger = true;
       action = "adjust";
@@ -603,7 +603,7 @@ void mockLLMOptimize()
   lastCheck = millis();
 }
 
-// ============ GỌI VOICE API (GEMINI THẬT) ============
+// ============ GỌI VOICE API (GEMINI) ============
 String callVoiceAPI(String voiceText)
 {
   if (WiFi.status() != WL_CONNECTED)
@@ -787,7 +787,7 @@ void handleButtons()
 
     if (testPresenceMode)
     {
-      // ✅ Khi BẬT test mode - giả lập có người
+      // Khi BẬT test mode - giả lập có người
       presenceDetected = true;
       motionDetected = true;
       presenceDistance = 50.0;
@@ -798,7 +798,7 @@ void handleButtons()
     }
     else
     {
-      // ✅ Khi TẮT test mode - reset về thực tế
+      // Khi TẮT test mode - reset về thực tế
       addLog("INFO", "✓ TEST MODE: OFF - REAL SENSORS");
       beep(50, 3);
     }
@@ -859,7 +859,7 @@ bool authenticateRequest(AsyncWebServerRequest *request)
 
 void setupWebServer()
 {
-  // ✅ BẮT BUỘC: XỬ LÝ CORS TRƯỚC KHI ĐỊNH NGHĨA ROUTES
+  // BẮT BUỘC: XỬ LÝ CORS TRƯỚC KHI ĐỊNH NGHĨA ROUTES
 
   // 1. Thêm default headers cho TẤT CẢ responses
   // CHỈ CẦN CÀI ĐẶT 1 LẦN TẠI ĐÂY
@@ -868,7 +868,7 @@ void setupWebServer()
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
   DefaultHeaders::Instance().addHeader("Access-Control-Max-Age", "3600");
 
-  // 2. ✅ XỬ LÝ OPTIONS PREFLIGHT CHO MỌI ENDPOINT
+  // 2. XỬ LÝ OPTIONS PREFLIGHT CHO MỌI ENDPOINT
   server.onNotFound([](AsyncWebServerRequest *request)
                     {
     if (request->method() == HTTP_OPTIONS) {
@@ -878,7 +878,7 @@ void setupWebServer()
       request->send(404, "application/json", "{\"error\":\"Not found\"}");
     } });
 
-  // 3. ✅ OPTIONS handler tổng quát
+  // 3. OPTIONS handler tổng quát
   server.on("/*", HTTP_OPTIONS, [](AsyncWebServerRequest *request)
             { 
               // Tự động áp dụng DefaultHeaders
@@ -898,14 +898,13 @@ void setupWebServer()
     serializeJson(doc, response);
     
     AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-    // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+    // XÓA HEADER TRÙNG LẶP
     request->send(resp); });
 
   server.on("/sensors", HTTP_GET, [](AsyncWebServerRequest *request)
             {
     if (!authenticateRequest(request)) {
       AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
       request->send(resp);
       return;
     }
@@ -930,17 +929,19 @@ void setupWebServer()
     serializeJson(doc, response);
     
     AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-    // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
     request->send(resp); });
 
-  // ✅ FIX: /ac/command
+  // FIX: /ac/command
   server.on("/ac/command", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
             {
+    // Kiểm tra request còn hợp lệ
+    if (!request || request->_tempObject) return;
     
     if (!authenticateRequest(request)) {
-      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
-      request->send(resp);
+      if (request->_tempObject == nullptr) {
+        AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+        request->send(resp);
+      }
       return;
     }
     
@@ -996,21 +997,23 @@ void setupWebServer()
       String response;
       serializeJson(respDoc, response);
       
-      AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
-      request->send(resp);
+      if (!request->_tempObject) {
+        AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+        request->send(resp);
+      }
     } else {
-      AsyncWebServerResponse *resp = request->beginResponse(400, "application/json", "{\"error\":\"No valid settings\"}");
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
-      request->send(resp);
+      if (!request->_tempObject) {
+        AsyncWebServerResponse *resp = request->beginResponse(400, "application/json", "{\"error\":\"No valid settings\"}");
+        request->send(resp);
+      }
     } });
 
-  // ✅ FIX: /ai/toggle
+  // FIX: /ai/toggle
   server.on("/ai/toggle", HTTP_POST, [](AsyncWebServerRequest *request)
             {
     if (!authenticateRequest(request)) {
       AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
+      // ĐÃ XÓA HEADER TRÙNG LẶP
       request->send(resp);
       return;
     }
@@ -1028,19 +1031,21 @@ void setupWebServer()
     addLog("INFO", aiEnabled ? "AI Mode: ENABLED" : "AI Mode: DISABLED");
     
     AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-    // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
     request->send(resp);
     
     updateLCD(); });
 
-  // ✅ FIX: /voice/command
+  // FIX: /voice/command
   server.on("/voice/command", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
             {
+    // Kiểm tra request còn hợp lệ
+    if (!request || request->_tempObject) return;
     
     if (!authenticateRequest(request)) {
-      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
-      request->send(resp);
+      if (request->_tempObject == nullptr) {
+        AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+        request->send(resp);
+      }
       return;
     }
     
@@ -1050,14 +1055,13 @@ void setupWebServer()
     String voiceText = doc["text"] | "";
     if (voiceText.length() == 0) {
       AsyncWebServerResponse *resp = request->beginResponse(400, "application/json", "{\"error\":\"Missing text\"}");
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
       request->send(resp);
       return;
     }
     
     addLog("INFO", "Voice: " + voiceText);
-    
-    // ✅ Forward đến Flask Gemini Server
+
+    // Forward đến Flask Gemini Server
     String apiResponse = callVoiceAPI(voiceText);
     
     if (apiResponse.length() > 0 && apiResponse.indexOf("error") == -1) {
@@ -1081,7 +1085,7 @@ void setupWebServer()
           respDoc["mode"] = geminiDoc["mode"] | acMode;
           respDoc["reason"] = geminiDoc["reason"] | lastAIResponse;
           
-          // ✅ QUAN TRỌNG: Thêm audio_url nếu có
+          //Thêm audio_url nếu có
           if (geminiDoc.containsKey("audio_url")) {
             respDoc["audio_url"] = geminiDoc["audio_url"].as<String>();
           }
@@ -1097,15 +1101,17 @@ void setupWebServer()
       String response;
       serializeJson(respDoc, response);
       
-      AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
-      request->send(resp);
+      if (!request->_tempObject) {
+        AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+        request->send(resp);
+      }
       
     } else {
-      AsyncWebServerResponse *resp = request->beginResponse(500, "application/json", 
-        "{\"error\":\"Voice API failed\",\"reason\":\"Không kết nối được Gemini server\"}");
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
-      request->send(resp);
+      if (!request->_tempObject) {
+        AsyncWebServerResponse *resp = request->beginResponse(500, "application/json", 
+          "{\"error\":\"Voice API failed\",\"reason\":\"Không kết nối được Gemini server\"}");
+        request->send(resp);
+      }
     } });
 
   // ============ CÁC ENDPOINT KHÁC - ĐÃ XÓA CORS HEADERS ============
@@ -1114,7 +1120,6 @@ void setupWebServer()
             {
     if (!authenticateRequest(request)) {
       AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
       request->send(resp);
       return;
     }
@@ -1132,14 +1137,12 @@ void setupWebServer()
     serializeJson(doc, response);
     
     AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-    // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
     request->send(resp); });
 
   server.on("/stats", HTTP_GET, [](AsyncWebServerRequest *request)
             {
     if (!authenticateRequest(request)) {
       AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
       request->send(resp);
       return;
     }
@@ -1155,7 +1158,6 @@ void setupWebServer()
     serializeJson(doc, response);
     
     AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-    // ✅ ĐÃ XÓA HEADER TRÙNG LẶP
     request->send(resp); });
 
   server.begin();
@@ -1254,7 +1256,7 @@ void loop()
   handleButtons();
   receiveIR();
 
-  // ✅ AI luôn chạy khi được bật, không quan tâm test mode
+  // AI luôn chạy khi được bật, không quan tâm test mode
   if (aiEnabled)
   {
     mockLLMOptimize();
