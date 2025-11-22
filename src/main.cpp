@@ -871,11 +871,16 @@ void setupWebServer()
   // 2. XỬ LÝ OPTIONS PREFLIGHT CHO MỌI ENDPOINT
   server.onNotFound([](AsyncWebServerRequest *request)
                     {
+    if (!request || request->_tempObject) return;
+    
     if (request->method() == HTTP_OPTIONS) {
-      // Tự động áp dụng DefaultHeaders
-      request->send(200);
+      if (!request->_tempObject) {
+        request->send(200);
+      }
     } else {
-      request->send(404, "application/json", "{\"error\":\"Not found\"}");
+      if (!request->_tempObject) {
+        request->send(404, "application/json", "{\"error\":\"Not found\"}");
+      }
     } });
 
   // 3. OPTIONS handler tổng quát
@@ -888,24 +893,31 @@ void setupWebServer()
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
             {
+    if (!request || request->_tempObject) return;
+    
     DynamicJsonDocument doc(512);
     doc["name"] = "Daikin AC Control";
-    doc["version"] = "7.2-CORS-Fixed";
+    doc["version"] = "7.3-PCB-Fixed";
     doc["model"] = "Daikin";
     doc["ai_mode"] = "Mock LLM (Embedded)";
     doc["status"] = "ok";
     String response;
     serializeJson(doc, response);
     
-    AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-    // XÓA HEADER TRÙNG LẶP
-    request->send(resp); });
+    if (!request->_tempObject) {
+      AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+      request->send(resp);
+    } });
 
   server.on("/sensors", HTTP_GET, [](AsyncWebServerRequest *request)
             {
+    if (!request || request->_tempObject) return;
+    
     if (!authenticateRequest(request)) {
-      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      request->send(resp);
+      if (!request->_tempObject) {
+        AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+        request->send(resp);
+      }
       return;
     }
     
@@ -928,8 +940,10 @@ void setupWebServer()
     String response;
     serializeJson(doc, response);
     
-    AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-    request->send(resp); });
+    if (!request->_tempObject) {
+      AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+      request->send(resp);
+    } });
 
   // FIX: /ac/command
   server.on("/ac/command", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
@@ -1011,10 +1025,13 @@ void setupWebServer()
   // FIX: /ai/toggle
   server.on("/ai/toggle", HTTP_POST, [](AsyncWebServerRequest *request)
             {
+    if (!request || request->_tempObject) return;
+    
     if (!authenticateRequest(request)) {
-      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      // ĐÃ XÓA HEADER TRÙNG LẶP
-      request->send(resp);
+      if (!request->_tempObject) {
+        AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+        request->send(resp);
+      }
       return;
     }
     
@@ -1030,8 +1047,10 @@ void setupWebServer()
     
     addLog("INFO", aiEnabled ? "AI Mode: ENABLED" : "AI Mode: DISABLED");
     
-    AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-    request->send(resp);
+    if (!request->_tempObject) {
+      AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+      request->send(resp);
+    }
     
     updateLCD(); });
 
@@ -1118,9 +1137,13 @@ void setupWebServer()
 
   server.on("/ac/status", HTTP_GET, [](AsyncWebServerRequest *request)
             {
+    if (!request || request->_tempObject) return;
+    
     if (!authenticateRequest(request)) {
-      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      request->send(resp);
+      if (!request->_tempObject) {
+        AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+        request->send(resp);
+      }
       return;
     }
     
@@ -1136,14 +1159,20 @@ void setupWebServer()
     String response;
     serializeJson(doc, response);
     
-    AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-    request->send(resp); });
+    if (!request->_tempObject) {
+      AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+      request->send(resp);
+    } });
 
   server.on("/stats", HTTP_GET, [](AsyncWebServerRequest *request)
             {
+    if (!request || request->_tempObject) return;
+    
     if (!authenticateRequest(request)) {
-      AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
-      request->send(resp);
+      if (!request->_tempObject) {
+        AsyncWebServerResponse *resp = request->beginResponse(401, "application/json", "{\"error\":\"Unauthorized\"}");
+        request->send(resp);
+      }
       return;
     }
     
@@ -1157,11 +1186,13 @@ void setupWebServer()
     String response;
     serializeJson(doc, response);
     
-    AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
-    request->send(resp); });
+    if (!request->_tempObject) {
+      AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", response);
+      request->send(resp);
+    } });
 
   server.begin();
-  addLog("SUCCESS", "WebServer with CORS OK (v3 Fixed)");
+  addLog("SUCCESS", "WebServer OK (v7.3 - PCB NULL Fixed)");
 }
 
 // ============ SETUP ============
@@ -1171,10 +1202,10 @@ void setup()
   delay(1000);
 
   Serial.println("\n╔═══════════════════════════════╗");
-  Serial.println("║  DAIKIN AC CONTROL v7.1       ║");
-  Serial.println("║  ✅ Test Mode AI Fixed        ║");
-  Serial.println("║  ✅ LCD Rotation Display      ║");
-  Serial.println("║  ✅ Fast AI Cooldown (5s)     ║");
+  Serial.println("║  DAIKIN AC CONTROL v7.3       ║");
+  Serial.println("║  ✅ PCB NULL Fixed            ║");
+  Serial.println("║  ✅ Request Validation        ║");
+  Serial.println("║  ✅ Connection Stable         ║");
   Serial.println("╚═══════════════════════════════╝");
 
   pinMode(BTN_POWER, INPUT_PULLUP);
@@ -1188,9 +1219,9 @@ void setup()
   lcd.init();
   lcd.backlight();
   lcd.clear();
-  lcd.print("Daikin AC v7.1");
+  lcd.print("Daikin AC v7.3");
   lcd.setCursor(0, 1);
-  lcd.print("Mock LLM Fixed");
+  lcd.print("PCB NULL Fixed");
   beep(100, 1);
 
   if (!rtc.begin())
