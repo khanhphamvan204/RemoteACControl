@@ -10,7 +10,7 @@ import hashlib
 app = Flask(__name__)
 
 API_KEY = "AC_SECRET_KEY_2024_LLM_V5"
-GEMINI_KEY = "AIzaSyDCHnIMawPafYPbtHAppUXWSE1_mJlcuII"
+GEMINI_KEY = "AIzaSyBkdasAhs0XgsUBfNyRUMKhKPfcUbHoQtw"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 # Cache directory for TTS files
@@ -19,48 +19,80 @@ os.makedirs(TTS_CACHE_DIR, exist_ok=True)
 
 # ============ VOICE COMMAND PROMPT ============
 VOICE_PROMPT = """
-You are "Trợ lý AI" - a friendly Vietnamese-speaking AC voice assistant. Analyze user's voice command and provide appropriate AC control.
+Bạn là "Trợ lý Điều hòa AI" - trợ lý giọng nói thông minh bằng tiếng Việt.
 
-IMPORTANT: Respond with VALID JSON ONLY (no markdown, no code blocks):
+CHÚ Ý: LUÔN trả về JSON hợp lệ với ĐẦY ĐỦ các field (KHÔNG được dùng null):
 {
   "action": "turn_on|turn_off|adjust|maintain",
   "temperature": <16-30>,
   "fan_speed": "QUIET|LOW|MEDIUM|HIGH|AUTO",
   "mode": "COOL|DRY|FAN|HEAT|AUTO",
-  "reason": "<friendly Vietnamese explanation, 50-100 chars>"
+  "reason": "<giải thích ngắn gọn 50-100 ký tự>"
 }
 
-Understanding Commands:
-- Turn on: "bật", "mở", "turn on", "start", "power on"
-- Turn off: "tắt", "turn off", "stop", "power off"
-- Cooler: "mát hơn", "lạnh hơn", "cooler", "colder", "giảm nhiệt"
-- Warmer: "ấm hơn", "warmer", "tăng nhiệt"
-- Hot: "nóng", "hot" → Turn on with LOW temp (22-23°C)
-- Cold: "lạnh", "cold" → Turn off or INCREASE temp
-- Humid: "ẩm", "humid" → Use DRY mode
-- Set temp: "24 độ", "set to 24", "24 degrees"
-- Quiet: "yên tĩnh", "quiet", "im" → QUIET fan
-- Strong: "mạnh", "strong", "nhanh" → HIGH fan
+QUAN TRỌNG - LOGIC ACTION:
+- turn_on: Khi AC đang TẮT và cần BẬT lên
+- turn_off: Khi AC đang BẬT và cần TẮT đi (vẫn cần trả temperature/fan_speed/mode hiện tại)
+- adjust: Khi AC đang BẬT và cần THAY ĐỔI cài đặt
+- maintain: Khi AC đang BẬT và GIỮ NGUYÊN (không cần thay đổi)
 
-Response Style (Vietnamese):
-- Use friendly tone with "mình" (I) and "bạn" (you)
-- Example: "Bạn nói nóng quá nên mình đã bật điều hòa ở 22°C với quạt mạnh để làm mát nhanh cho bạn nhé!"
-- Be conversational and warm
-- Explain what you did and why
-- Keep explanations concise but friendly (50-100 chars)
+LỆNH CƠ BẢN:
+- Bật: "bật điều hòa", "mở máy lạnh", "bật lên"
+  → AC đang TẮT: action = "turn_on"
+  
+- Tắt: "tắt điều hòa", "tắt đi", "ngưng"
+  → AC đang BẬT: action = "turn_off"
+  
+- Mát hơn: "lạnh hơn", "giảm nhiệt", "cho mát"
+  → AC đang TẮT: action = "turn_on" (bật với nhiệt độ thấp)
+  → AC đang BẬT: action = "adjust" (giảm 1-2°C)
+  
+- Ấm hơn: "ấm hơn", "bớt lạnh", "tăng nhiệt"
+  → AC đang BẬT: action = "adjust" (tăng 1-2°C)
+  → Nếu đã đủ ấm: action = "turn_off"
+  
+- Đặt nhiệt độ: "24 độ", "chỉnh 25", "để 23"
+  → AC đang TẮT: action = "turn_on" (bật với nhiệt độ chỉ định)
+  → AC đang BẬT: action = "adjust" (thay đổi nhiệt độ)
+  
+- Quạt/chế độ: "quạt mạnh", "hút ẩm"
+  → AC đang BẬT: action = "adjust"
 
-Smart Context Awareness:
-- If AC is OFF and user says "cooler" → Turn ON with low temp
-- If AC is ON and user says "warmer" → Increase temp or turn OFF
-- Consider current temperature when deciding
-- If unclear, choose safe comfortable defaults (25°C, MEDIUM fan)
+TỰ ĐỘNG ĐIỀU CHỈNH:
+Khi người dùng nói: "điều chỉnh cho phù hợp", "tự động", "chỉnh thoải mái", "nhiệt độ tốt nhất"
+→ Phân tích cảm biến và quyết định action:
 
-Fan Speed Selection:
-- QUIET: When user wants silence or it's night time
-- LOW: Small adjustments, energy saving
-- MEDIUM: Default, balanced
-- HIGH: Quick cooling, hot conditions
-- AUTO: When unsure
+AC ĐANG TẮT:
+- Nhiệt độ phòng < 24°C: action = "maintain" (không cần bật, giải thích lý do)
+- Nhiệt độ phòng 24-27°C: action = "turn_on" với AC = Phòng - 1°C
+- Nhiệt độ phòng 28-30°C: action = "turn_on" với AC = Phòng - 4°C
+- Nhiệt độ phòng > 30°C: action = "turn_on" với AC = 21-23°C, quạt HIGH
+
+AC ĐANG BẬT:
+- So sánh nhiệt độ AC hiện tại với nhiệt độ tối ưu
+- Nếu cần thay đổi > 1°C: action = "adjust"
+- Nếu đã phù hợp: action = "maintain"
+- Nếu phòng quá lạnh (< 20°C): action = "turn_off"
+
+Độ ẩm:
+- > 75%: Ưu tiên mode = "DRY"
+- < 50%: mode = "COOL"
+
+PHONG CÁCH:
+- Dùng "mình" và "bạn", thân thiện
+- Giải thích ngắn gọn đã làm gì
+- Khi tự động: Đề cập dữ liệu cảm biến
+- VD TẮT→BẬT: "Phòng 32°C quá nóng, mình đã bật điều hòa 23°C quạt mạnh!"
+- VD BẬT→CHỈNH: "Mình đã giảm từ 26°C xuống 24°C cho bạn mát hơn!"
+- VD GIỮ NGUYÊN: "Nhiệt độ 25°C hiện tại đã phù hợp rồi bạn nhé!"
+
+LƯU Ý:
+- Nhiệt độ hợp lệ: 16-30°C
+- LUÔN trả về ĐẦY ĐỦ các field, KHÔNG được null
+- Khi turn_off: Giữ nguyên temperature/fan_speed/mode hiện tại của AC
+- Luôn kiểm tra trạng thái AC hiện tại trước khi quyết định action
+- Nếu không rõ và AC TẮT → turn_on với 25°C, MEDIUM, COOL
+- Nếu không rõ và AC BẬT → maintain (giữ nguyên)
 """
 
 def call_gemini(prompt, user_message, retry=True):
@@ -74,7 +106,7 @@ def call_gemini(prompt, user_message, retry=True):
                 "temperature": 0.4,
                 "topP": 0.9,
                 "topK": 40,
-                # "maxOutputTokens": 512
+                # "maxOutputTokens": 900
             },
             "safetySettings": [
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -94,32 +126,51 @@ def call_gemini(prompt, user_message, retry=True):
         )
         
         if res.status_code != 200:
-            print(f"[GEMINI ERROR] HTTP {res.status_code}: {res.text[:300]}")
+            print(f"[GEMINI ERROR] HTTP {res.status_code}: {res.text[:500]}")
             return None
 
         resp = res.json()
         
+        # Debug: In toàn bộ response
+        print(f"[GEMINI DEBUG] Full response: {json.dumps(resp, ensure_ascii=False)[:500]}")
+        
         if "candidates" not in resp or len(resp["candidates"]) == 0:
             print(f"[GEMINI ERROR] No candidates in response")
+            print(f"[GEMINI ERROR] Response keys: {resp.keys()}")
+            if "error" in resp:
+                print(f"[GEMINI ERROR] API Error: {resp['error']}")
             return None
         
         candidate = resp["candidates"][0]
         finish = candidate.get("finishReason", "")
         
+        print(f"[GEMINI DEBUG] Finish reason: {finish}")
+        
         if finish == "SAFETY":
             print("[GEMINI WARN] Response blocked by safety filters")
+            if "safetyRatings" in candidate:
+                print(f"[GEMINI WARN] Safety ratings: {candidate['safetyRatings']}")
             if retry:
-                print("[GEMINI] Retrying with modified prompt...")
-                return call_gemini(prompt, "Please provide a safe and helpful response. " + user_message, retry=False)
+                print("[GEMINI] Retrying with safer prompt...")
+                safer_message = user_message.replace("61.29999924", "32").replace("°C", " degrees")
+                return call_gemini(prompt, safer_message, retry=False)
             return None
         
-        if "content" not in candidate or "parts" not in candidate["content"]:
-            print(f"[GEMINI ERROR] No content/parts in response")
+        if "content" not in candidate:
+            print(f"[GEMINI ERROR] No 'content' in candidate")
+            print(f"[GEMINI ERROR] Candidate keys: {candidate.keys()}")
+            print(f"[GEMINI ERROR] Full candidate: {json.dumps(candidate, ensure_ascii=False)[:500]}")
+            return None
+            
+        if "parts" not in candidate["content"]:
+            print(f"[GEMINI ERROR] No 'parts' in content")
+            print(f"[GEMINI ERROR] Content: {candidate['content']}")
             return None
         
         parts = candidate["content"]["parts"]
         if len(parts) == 0 or "text" not in parts[0]:
             print(f"[GEMINI ERROR] No text in parts")
+            print(f"[GEMINI ERROR] Parts: {parts}")
             return None
         
         text = parts[0]["text"].strip()
@@ -132,6 +183,8 @@ def call_gemini(prompt, user_message, retry=True):
         return None
     except Exception as e:
         print(f"[GEMINI ERROR] Exception: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def extract_json(text):
@@ -151,30 +204,37 @@ def extract_json(text):
         json_str = text[start:end+1]
         parsed = json.loads(json_str)
         
-        if "action" not in parsed:
+        # Xử lý các field thiếu hoặc null
+        if "action" not in parsed or parsed["action"] is None:
             parsed["action"] = "maintain"
-        if "temperature" not in parsed:
+        if "temperature" not in parsed or parsed["temperature"] is None:
             parsed["temperature"] = 25
-        if "fan_speed" not in parsed:
+        if "fan_speed" not in parsed or parsed["fan_speed"] is None:
             parsed["fan_speed"] = "MEDIUM"
-        if "mode" not in parsed:
+        if "mode" not in parsed or parsed["mode"] is None:
             parsed["mode"] = "COOL"
-        if "reason" not in parsed:
+        if "reason" not in parsed or parsed["reason"] is None:
             parsed["reason"] = "Đã xử lý yêu cầu của bạn!"
         
+        # Validate và uppercase fan_speed
         fan_str = str(parsed["fan_speed"]).upper()
         if fan_str not in ["QUIET", "LOW", "MEDIUM", "HIGH", "AUTO"]:
             parsed["fan_speed"] = "MEDIUM"
         else:
             parsed["fan_speed"] = fan_str
         
+        # Validate và uppercase mode
         mode_str = str(parsed["mode"]).upper()
         if mode_str not in ["COOL", "DRY", "FAN", "HEAT", "AUTO"]:
             parsed["mode"] = "COOL"
         else:
             parsed["mode"] = mode_str
         
-        parsed["temperature"] = max(16, min(30, int(parsed["temperature"])))
+        # Validate temperature
+        try:
+            parsed["temperature"] = max(16, min(30, int(float(parsed["temperature"]))))
+        except (ValueError, TypeError):
+            parsed["temperature"] = 25
         
         print(f"[JSON SUCCESS] Parsed - Action: {parsed['action']}, Temp: {parsed['temperature']}, Fan: {parsed['fan_speed']}")
         return parsed
@@ -297,9 +357,9 @@ def index():
     """API info endpoint"""
     return jsonify({
         "service": "AC Voice Command Server with TTS",
-        "version": "6.0-TTS",
+        "version": "6.1-TTS",
         "status": "ok",
-        "model": "Gemini 2.0 Flash Experimental",
+        "model": "Gemini 2.5 Flash",
         "tts": "Google gTTS",
         "endpoints": {
             "POST /voice/command": "Process voice commands with Gemini AI + TTS",
@@ -379,6 +439,50 @@ Analyze the user's command and provide appropriate AC control action.
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route("/test/gemini")
+def test_gemini():
+    """Test Gemini API connection"""
+    try:
+        payload = {
+            "contents": [{
+                "parts": [{"text": "Xin chào, trả lời bằng JSON: {\"status\": \"ok\", \"message\": \"Xin chào\"}"}]
+            }],
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": 100
+            },
+            "safetySettings": [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+            ]
+        }
+        
+        res = requests.post(
+            f"{GEMINI_URL}?key={GEMINI_KEY}",
+            json=payload,
+            timeout=10
+        )
+        
+        if res.status_code != 200:
+            return jsonify({
+                "error": f"HTTP {res.status_code}",
+                "details": res.text[:500]
+            }), 500
+        
+        resp = res.json()
+        return jsonify({
+            "success": True,
+            "model": "gemini-1.5-flash",
+            "response": resp
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
+
 @app.route("/tts/speak", methods=["POST"])
 def tts_speak():
     """Endpoint tạo audio từ text"""
@@ -426,15 +530,19 @@ def after_request(response):
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("🎤 AC Voice Command Server v6.0 - WITH TTS")
+    print("🎤 AC Voice Command Server v6.1 - WITH TTS")
     print("=" * 70)
     print("📡 Server: http://0.0.0.0:5000")
-    print("🤖 AI Model: Gemini 2.0 Flash Experimental")
+    print("🤖 AI Model: Gemini 2.5 Flash")
     print("🔊 TTS Engine: Google gTTS (Vietnamese)")
     print("\n📋 Endpoints:")
     print("  POST /voice/command  - Voice commands + Auto TTS")
     print("  POST /tts/speak      - Generate TTS audio")
     print("  GET  /tts/audio/<id> - Serve audio files")
-    print("\n✨ NEW: Auto text-to-speech for all responses!")
+    print("\n✨ Features:")
+    print("  ✓ Smart voice command parsing")
+    print("  ✓ Auto text-to-speech responses")
+    print("  ✓ Sensor-based auto adjustment")
+    print("  ✓ Null-safe JSON parsing")
     print("=" * 70)
     app.run(host="0.0.0.0", port=5000, debug=True)

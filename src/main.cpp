@@ -616,7 +616,7 @@ String callVoiceAPI(String voiceText)
   http.begin(VOICE_API_URL);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", "Bearer " + String(API_KEY));
-  http.setTimeout(15000);
+  // http.setTimeout(65000);
 
   DynamicJsonDocument doc(1024);
   doc["text"] = voiceText;
