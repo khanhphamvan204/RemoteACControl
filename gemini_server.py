@@ -4,14 +4,15 @@ import json
 import re
 import os
 import tempfile
-from gtts import gTTS
 import hashlib
+import asyncio
+import edge_tts  # ✨ THAY THẾ gTTS
 
 app = Flask(__name__)
 
 API_KEY = "AC_SECRET_KEY_2024_LLM_V5"
-GEMINI_KEY = "AIzaSyBp-SuhE11ZXJE-YPpUqAWOqS5wHQxUKWU"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+GEMINI_KEY = "AIzaSyCylYnpcpWHKtf5Qn1jEMuffavZp6xSQks"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 # Cache directory for TTS files
 TTS_CACHE_DIR = tempfile.gettempdir() + "/tts_cache"
@@ -27,40 +28,13 @@ IMPORTANT: Respond with VALID JSON ONLY (no markdown, no code blocks):
   "temperature": <16-30>,
   "fan_speed": "QUIET|LOW|MEDIUM|HIGH|AUTO",
   "mode": "COOL|DRY|FAN|HEAT|AUTO",
-  "reason": "<friendly Vietnamese explanation, 50-100 chars>"
+  "reason": "<friendly Vietnamese explanation, 30-300 chars>"
 }
-
-Understanding Commands:
-- Turn on: "bật", "mở", "turn on", "start", "power on"
-- Turn off: "tắt", "turn off", "stop", "power off"
-- Cooler: "mát hơn", "lạnh hơn", "cooler", "colder", "giảm nhiệt"
-- Warmer: "ấm hơn", "warmer", "tăng nhiệt"
-- Hot: "nóng", "hot" → Turn on with LOW temp (22-23°C)
-- Cold: "lạnh", "cold" → Turn off or INCREASE temp
-- Humid: "ẩm", "humid" → Use DRY mode
-- Set temp: "24 độ", "set to 24", "24 degrees"
-- Quiet: "yên tĩnh", "quiet", "im" → QUIET fan
-- Strong: "mạnh", "strong", "nhanh" → HIGH fan
 
 Response Style (Vietnamese):
 - Use friendly tone with "mình" (I) and "bạn" (you)
 - Example: "Bạn nói nóng quá nên mình đã bật điều hòa ở 22°C với quạt mạnh để làm mát nhanh cho bạn nhé!"
-- Be conversational and warm
-- Explain what you did and why
-- Keep explanations concise but friendly (50-100 chars)
 
-Smart Context Awareness:
-- If AC is OFF and user says "cooler" → Turn ON with low temp
-- If AC is ON and user says "warmer" → Increase temp or turn OFF
-- Consider current temperature when deciding
-- If unclear, choose safe comfortable defaults (25°C, MEDIUM fan)
-
-Fan Speed Selection:
-- QUIET: When user wants silence or it's night time
-- LOW: Small adjustments, energy saving
-- MEDIUM: Default, balanced
-- HIGH: Quick cooling, hot conditions
-- AUTO: When unsure
 """
 
 def call_gemini(prompt, user_message, retry=True):
@@ -74,7 +48,7 @@ def call_gemini(prompt, user_message, retry=True):
                 "temperature": 0.4,
                 "topP": 0.9,
                 "topK": 40,
-                "maxOutputTokens": 512
+                "maxOutputTokens": 700
             },
             "safetySettings": [
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -261,24 +235,43 @@ def analyze_voice_fallback(text, temp, ac_on, ac_temp):
             "reason": f"Điều hòa đang hoạt động tốt ở {ac_temp}°C rồi!"
         }
 
+# ============ ✨ NEW FUNCTION: SAFE EDGE TTS ============
 def generate_tts_audio(text):
-    """Tạo file audio từ text sử dụng gTTS"""
+    """
+    Tạo audio TTS sử dụng EDGE-TTS (Microsoft)
+    Ưu điểm: Giọng AI tự nhiên, không bị lỗi 429 rate limit
+    An toàn: Chạy trên Event Loop riêng để không crash Flask
+    """
     try:
-        # Tạo cache key từ text
+        # Cache logic
         cache_key = hashlib.md5(text.encode('utf-8')).hexdigest()
         cache_file = os.path.join(TTS_CACHE_DIR, f"{cache_key}.mp3")
         
-        # Kiểm tra cache
         if os.path.exists(cache_file):
             print(f"[TTS] Using cached audio: {cache_key}")
             return cache_file
         
-        # Tạo audio mới
-        print(f"[TTS] Generating audio for: {text}")
-        tts = gTTS(text=text, lang='vi', slow=False)
-        tts.save(cache_file)
-        print(f"[TTS] Audio saved: {cache_file}")
-        return cache_file
+        print(f"[TTS] Generating (Edge): {text}")
+        
+        # Chọn giọng đọc (Nữ miền Bắc)
+        VOICE = "vi-VN-HoaiMyNeural" 
+        
+        # Hàm async nội bộ
+        async def _run_tts():
+            communicate = edge_tts.Communicate(text, VOICE)
+            await communicate.save(cache_file)
+
+        # ✨ CHẠY ASYNC AN TOÀN TRONG FLASK THREAD
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(_run_tts())
+            loop.close()
+            print(f"[TTS] Success: {os.path.basename(cache_file)}")
+            return cache_file
+        except Exception as loop_error:
+            print(f"[TTS LOOP ERROR] {loop_error}")
+            return None
         
     except Exception as e:
         print(f"[TTS ERROR] {e}")
@@ -296,11 +289,11 @@ def authenticate():
 def index():
     """API info endpoint"""
     return jsonify({
-        "service": "AC Voice Command Server with TTS",
-        "version": "6.0-TTS",
+        "service": "AC Voice Server v7.0 - Edge TTS",
+        "version": "7.0-Edge",
         "status": "ok",
-        "model": "Gemini 2.0 Flash Experimental",
-        "tts": "Google gTTS",
+        "model": "Gemini 2.5 Flash",
+        "tts": "Edge TTS (Neural Voice)",
         "endpoints": {
             "POST /voice/command": "Process voice commands with Gemini AI + TTS",
             "POST /tts/speak": "Generate TTS audio from text"
@@ -323,10 +316,11 @@ def voice_command():
         
         print(f"[VOICE] User said: '{voice_text}'")
         
-        temperature = data.get("temperature", 27)
-        humidity = data.get("humidity", 65)
+        # Làm tròn các giá trị số trước khi đưa cho AI
+        temperature = round(float(data.get("temperature", 27)), 1)
+        humidity = round(float(data.get("humidity", 65)), 1)
         ac_status = data.get("ac_status", False)
-        ac_temp = data.get("ac_temp", 25)
+        ac_temp = round(float(data.get("ac_temp", 25)), 1)
         ac_mode = data.get("ac_mode", "COOL")
         ac_fan = data.get("ac_fan", "MEDIUM")
         
@@ -426,15 +420,11 @@ def after_request(response):
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("🎤 AC Voice Command Server v6.0 - WITH TTS")
+    print("🎤 AC Voice Command Server v7.0 - EDGE TTS (SAFE MODE)")
     print("=" * 70)
     print("📡 Server: http://0.0.0.0:5000")
-    print("🤖 AI Model: Gemini 2.0 Flash Experimental")
-    print("🔊 TTS Engine: Google gTTS (Vietnamese)")
-    print("\n📋 Endpoints:")
-    print("  POST /voice/command  - Voice commands + Auto TTS")
-    print("  POST /tts/speak      - Generate TTS audio")
-    print("  GET  /tts/audio/<id> - Serve audio files")
-    print("\n✨ NEW: Auto text-to-speech for all responses!")
+    print("🤖 AI Model: Gemini 2.5 Flash")
+    print("🔊 TTS Engine: Edge TTS (Neural Voice)")
+    print("\n✨ Updated: Replaced gTTS with edge-tts (No Rate Limit, Natural Voice)")
     print("=" * 70)
     app.run(host="0.0.0.0", port=5000, debug=True)
