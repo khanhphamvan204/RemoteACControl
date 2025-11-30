@@ -75,7 +75,7 @@ String acMode = "COOL";
 FanSpeed acFan = FAN_MEDIUM;
 
 // ============ BIẾN AI ============
-bool aiEnabled = true;
+bool aiEnabled = false;
 bool aiProcessing = false;
 String lastAIResponse = "";
 unsigned long lastAIOptimization = 0;
@@ -461,7 +461,7 @@ void mockLLMOptimize()
   // ===== RULE 1: Không có người - Tắt AC =====
   if (!presenceDetected && !motionDetected && acStatus)
   {
-    if (millis() - lastPresenceTime > 60000) // ✅ GIẢM XUỐNG 1 PHÚT
+    if (millis() - lastPresenceTime > 10000)
     {
       trigger = true;
       action = "turn_off";

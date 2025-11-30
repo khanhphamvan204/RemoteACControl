@@ -7,11 +7,13 @@ import tempfile
 import hashlib
 import asyncio
 import edge_tts  # ✨ THAY THẾ gTTS
+import dotenv
+load_dotenv()
 
 app = Flask(__name__)
 
-API_KEY = "AC_SECRET_KEY_2024_LLM_V5"
-GEMINI_KEY = "AIzaSyCylYnpcpWHKtf5Qn1jEMuffavZp6xSQks"
+API_KEY = os.getenv("API_KEY")
+GEMINI_KEY = "AIzaSyAeL2Omtco2yVD9TQy3_3rdPH3cm2JrRjA"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 # Cache directory for TTS files
@@ -48,7 +50,7 @@ def call_gemini(prompt, user_message, retry=True):
                 "temperature": 0.4,
                 "topP": 0.9,
                 "topK": 40,
-                "maxOutputTokens": 700
+                # "maxOutputTokens": 900
             },
             "safetySettings": [
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -242,6 +244,7 @@ def generate_tts_audio(text):
     Ưu điểm: Giọng AI tự nhiên, không bị lỗi 429 rate limit
     An toàn: Chạy trên Event Loop riêng để không crash Flask
     """
+    return None
     try:
         # Cache logic
         cache_key = hashlib.md5(text.encode('utf-8')).hexdigest()
